@@ -12,7 +12,7 @@ from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 ROOT = Path(__file__).parent
-FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/analyze_video.py", "core/gaze.py",
+FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/analyze_video.py", "core/gaze.py",
          "core/personas.py", "core/player.py", "core/sandbox.py"]
 NAME = "adlens-demo"
 PORT = 8501
@@ -42,7 +42,7 @@ def deploy():
         daytona.delete(old)
 
     secrets = {k: v for k, v in dotenv_values(ROOT / ".env").items()
-               if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY") and v}
+               if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY") and v}
     print("creating sandbox…")
     sb = daytona.create(CreateSandboxFromSnapshotParams(
         language="python", env_vars=secrets, labels={"app": NAME}, auto_stop_interval=0))
@@ -52,7 +52,12 @@ def deploy():
     for f in FILES:
         p = ROOT / f
         sb.fs.upload_file(p.read_bytes() if p.exists() else b"", f"{APP_DIR}/{f}")
-    print("uploaded", len(FILES), "files; installing deps…")
+    faces = sorted((ROOT / "cache" / "avatars").glob("*.jpg"))
+    if faces:  # ship already-generated portraits so the demo doesn't pay for them twice
+        sb.process.exec(f"mkdir -p {APP_DIR}/cache/avatars")
+        for f in faces:
+            sb.fs.upload_file(f.read_bytes(), f"{APP_DIR}/cache/avatars/{f.name}")
+    print("uploaded", len(FILES), "files +", len(faces), "portraits; installing deps…")
     r = sb.process.exec(f"cd {APP_DIR} && pip install -q -r requirements.txt", timeout=600)
     if r.exit_code != 0:
         raise SystemExit(r.result[-1500:])

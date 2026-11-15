@@ -31,7 +31,7 @@ const media = document.getElementById('media'), ov = document.getElementById('ov
 const [GW, GH] = D.grid;
 const off = document.createElement('canvas'); off.width = GW; off.height = GH;
 const octx = off.getContext('2d'), img = octx.createImageData(GW, GH);
-const byId = {}; D.personas.forEach(p => byId[p.id] = p);
+const byId = {}; D.personas.forEach(p => { byId[p.id] = p; if (p.img) { p.im = new Image(); p.im.src = p.img; } });
 const tracks = {};  // persona id -> sorted gaze points
 D.gaze.forEach(g => (tracks[g.id] = tracks[g.id] || []).push(g));
 Object.values(tracks).forEach(a => a.sort((x, y) => x.t - y.t));
@@ -72,9 +72,13 @@ function draw(){
     const p = byId[id]; if (!p) continue;
     const g = gazeAt(tracks[id], t); sum += g.cur.interest; n++;
     if (document.getElementById('cDots').checked) {
-      ctx.beginPath(); ctx.arc(g.x*w, g.y*h, 7, 0, 7); ctx.fillStyle = p.color; ctx.globalAlpha = .9; ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke(); ctx.globalAlpha = 1;
-      ctx.font = '11px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(p.name, g.x*w + 9, g.y*h + 4);
+      const R = p.im ? 15 : 7, cx = g.x*w, cy = g.y*h;
+      if (p.im && p.im.complete) {
+        ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.clip();
+        ctx.drawImage(p.im, cx - R, cy - R, 2*R, 2*R); ctx.restore();
+      } else { ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fillStyle = p.color; ctx.fill(); }
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.lineWidth = 3; ctx.strokeStyle = p.color; ctx.stroke();
+      ctx.font = '11px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(p.name, cx + R + 3, cy + 4);
     }
     rows.push({p, g: g.cur});
   }
@@ -88,7 +92,7 @@ function draw(){
   rows.sort((a, b) => b.g.interest - a.g.interest);
   document.getElementById('avg').textContent = n ? `avg interest ${(sum/n).toFixed(2)} / 5` : '';
   document.getElementById('side').innerHTML = rows.map(({p, g}) => `
-    <div class="row"><div class="dot" style="background:${p.color}"></div><div>
+    <div class="row">${p.img ? `<img src="${p.img}" style="width:34px;height:34px;border-radius:50%;border:2px solid ${p.color};flex:0 0 34px">` : `<div class="dot" style="background:${p.color}"></div>`}<div>
       <b>${esc(p.name)}</b> <span class="meta">${esc(p.age)} · ${esc(p.gender)} · ${esc(p.occupation)}</span><br>
       👁 ${esc(g.looking_at)}<br>💭 ${esc(g.thought)}
       <div class="bar"><div style="width:${g.interest*20}%"></div></div></div></div>`).join('');
@@ -99,7 +103,9 @@ function draw(){
 """
 
 
-def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict], gaze: list[dict], height=560) -> str:
+def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict], gaze: list[dict], height=560,
+                  avatars: dict | None = None) -> str:
+    avatars = avatars or {}
     src = f"data:{mime};base64,{base64.b64encode(media).decode()}"
     if mime.startswith("video"):
         tag = f'<video id="media" src="{src}" controls muted playsinline></video>'
@@ -107,7 +113,8 @@ def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict],
         tag = f'<img id="media" src="{src}">'
     data = {"grid": analysis["grid"],
             "frames": [{"t": f["t"], "heat": f["heat"]} for f in analysis["frames"]],
-            "personas": [{k: p.get(k) for k in ("id", "name", "age", "gender", "occupation", "color")} for p in personas],
+            "personas": [{**{k: p.get(k) for k in ("id", "name", "age", "gender", "occupation", "color")},
+                          "img": avatars.get(p["id"])} for p in personas],
             "gaze": gaze,
             "transcript": analysis.get("transcript", [])}
     return (TEMPLATE.replace("__MEDIA__", tag)

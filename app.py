@@ -1,4 +1,5 @@
 """AdLens — synthetic audience panel for ads. Streamlit UI (English / 日本語)."""
+import io
 import json
 from pathlib import Path
 
@@ -6,9 +7,11 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
+from PIL import Image
 
 load_dotenv()
 
+from core import avatars  # noqa: E402
 from core.gaze import chat_with_persona, persona_gaze  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
 from core.player import render_player  # noqa: E402
@@ -41,8 +44,27 @@ personas = st.session_state.personas.to_dict("records")
 
 tab_run, tab_panel, tab_chat = st.tabs(["▶️ Test ad / 広告テスト", "👥 Panel / パネル", "💬 Interview / インタビュー"])
 
+def avatar_map(ps):
+    return {p["id"]: img for p in ps if (img := avatars.cached(p))}
+
+
 with tab_panel:
     st.write(f"{len(personas)} personas")
+    if avatars.available():
+        missing = [p for p in personas if not avatars.cached(p)]
+        if missing and st.button(f"🎨 Generate portraits for {len(missing)} personas / 顔写真を生成"):
+            with st.spinner(f"Generating {len(missing)} portraits with {avatars.IMAGE_MODEL}…"):
+                avatars.generate_all(missing, st.write)
+    else:
+        st.caption("Add OPENAI_API_KEY to .env to generate persona portraits.")
+    amap = avatar_map(personas)
+    if amap:
+        cols = st.columns(6)
+        for i, p in enumerate(personas):
+            with cols[i % 6]:
+                if p["id"] in amap:
+                    st.image(amap[p["id"]], use_container_width=True)
+                st.caption(f"**{p['name']}** {p['age']} · {p.get('occupation', '')}")
     st.dataframe(st.session_state.personas.drop(columns=["color"]), use_container_width=True, hide_index=True)
 
 # ---------------- Run analysis ----------------
@@ -74,7 +96,8 @@ with tab_run:
     res = st.session_state.get("result")
     if res:
         st.caption(f"Heatmaps computed in: **{res['where']}** sandbox · {res['name']}")
-        components.html(render_player(res["media"], res["mime"], res["analysis"], res["personas"], res["gaze"]),
+        components.html(render_player(res["media"], res["mime"], res["analysis"], res["personas"], res["gaze"],
+                                      avatars={k: avatars.data_url(v) for k, v in avatar_map(res["personas"]).items()}),
                         height=620, scrolling=False)
 
         g = pd.DataFrame(res["gaze"])
@@ -110,13 +133,17 @@ with tab_chat:
                     st.write(f"`{s['start']:.0f}s` {s['text']}")
         chats = st.session_state.setdefault("chats", {})
         history = chats.setdefault(pid, [])
+        face = avatars.cached(persona)
+        if face:
+            st.image(face, width=120)
+        bot = Image.open(io.BytesIO(face)) if face else None
         for m in history:
             text = m["content"] if isinstance(m["content"], str) else m["content"][-1]["text"]
-            st.chat_message(m["role"]).write(text)
+            st.chat_message(m["role"], avatar=bot if m["role"] == "assistant" else None).write(text)
         q = st.chat_input("Ask this persona… / 質問してください")
         if q:
             st.chat_message("user").write(q)
             kf = res["analysis"]["keyframes"][0] if res["analysis"]["keyframes"] else None
             ans = chat_with_persona(persona, mine, history, q, kf, res["analysis"].get("transcript"))
-            st.chat_message("assistant").write(ans)
+            st.chat_message("assistant", avatar=bot).write(ans)
             history += [{"role": "user", "content": q}, {"role": "assistant", "content": ans}]
