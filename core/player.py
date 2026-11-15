@@ -4,21 +4,21 @@ import json
 
 TEMPLATE = r"""
 <style>
-  body{margin:0;font-family:-apple-system,"Hiragino Sans",sans-serif;color:#eee;background:#0e1117}
+  body{margin:0;font-family:"Zen Kaku Gothic New","Hiragino Sans",sans-serif;color:#1D2321;background:#F3F4F1}
   #wrap{display:flex;gap:12px;align-items:flex-start}
-  #stage{position:relative;flex:0 0 66%;max-width:66%}
-  #stage video,#stage img{width:100%;display:block;border-radius:8px}
-  #ov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
+  #stage{position:relative;flex:0 0 66%;max-width:66%;background:#15181A;border-radius:6px;padding:10px}
+  #stage video,#stage img{width:100%;display:block}
+  #ov{position:absolute;left:10px;top:10px;width:calc(100% - 20px);height:calc(100% - 20px);pointer-events:none}
   #side{flex:1;max-height:__H__px;overflow:auto;font-size:12px}
-  .row{display:flex;gap:6px;padding:5px 4px;border-bottom:1px solid #222}
+  .row{display:flex;gap:8px;padding:7px 4px;border-bottom:1px solid #D6DAD5}
   .dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px;margin-top:3px}
-  .meta{color:#999} .bar{height:4px;background:#333;border-radius:2px;margin-top:3px}
-  .bar>div{height:4px;border-radius:2px;background:#f5a623}
-  #ctl{margin:8px 0;font-size:13px} #ctl label{margin-right:14px} #t{color:#f5a623}
+  .meta{color:#5E6763} .bar{height:3px;background:#D6DAD5;margin-top:4px}
+  .bar>div{height:3px;background:#2448D8}
+  #ctl{margin:8px 0;font-size:13px} #ctl label{margin-right:14px} #t{font-weight:700}
 </style>
 <div id="ctl">
-  <label><input type="checkbox" id="cHeat" checked> Heatmap / ヒートマップ</label>
-  <label><input type="checkbox" id="cDots" checked> Persona gaze / 視線</label>
+  <label><input type="checkbox" id="cHeat" checked> Where eyes go / ヒートマップ</label>
+  <label><input type="checkbox" id="cDots" checked> Viewers / 視聴者</label>
   <span>t=<span id="t">0.0</span>s</span> · <span id="avg"></span>
 </div>
 <div id="wrap">
@@ -90,11 +90,11 @@ function draw(){
     ctx.fillStyle = '#fff'; ctx.fillText(seg.text, w/2, h - 27); ctx.textAlign = 'start';
   }
   rows.sort((a, b) => b.g.interest - a.g.interest);
-  document.getElementById('avg').textContent = n ? `avg interest ${(sum/n).toFixed(2)} / 5` : '';
+  document.getElementById('avg').textContent = n ? `average interest ${(sum/n).toFixed(1)} of 5` : '';
   document.getElementById('side').innerHTML = rows.map(({p, g}) => `
     <div class="row">${p.img ? `<img src="${p.img}" style="width:34px;height:34px;border-radius:50%;border:2px solid ${p.color};flex:0 0 34px">` : `<div class="dot" style="background:${p.color}"></div>`}<div>
-      <b>${esc(p.name)}</b> <span class="meta">${esc(p.age)} · ${esc(p.gender)} · ${esc(p.occupation)}</span><br>
-      👁 ${esc(g.looking_at)}<br>💭 ${esc(g.thought)}
+      <b>${esc(p.name)}</b> <span class="meta">${esc(p.age)}, ${esc(p.occupation)}</span><br>
+      <span class="meta">Looking at ${esc(g.looking_at)}</span><br>${esc(g.thought)}
       <div class="bar"><div style="width:${g.interest*20}%"></div></div></div></div>`).join('');
   requestAnimationFrame(draw);
 }
