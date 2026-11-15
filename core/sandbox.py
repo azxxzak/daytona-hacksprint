@@ -25,16 +25,21 @@ def analyze_in_daytona(media: bytes, filename: str, log=print) -> dict:
         sandbox.fs.upload_file(SCRIPT.read_bytes(), f"{REMOTE_DIR}/analyze_video.py")
 
         log("Installing OpenCV in sandbox… / 環境構築中")
-        r = sandbox.process.exec("pip install -q opencv-python-headless numpy", timeout=300)
+        r = sandbox.process.exec("pip install -q opencv-python-headless numpy imageio-ffmpeg faster-whisper",
+                                 timeout=400)
         if r.exit_code != 0:
             raise RuntimeError(f"pip failed: {r.result[-500:]}")
 
-        log("Computing per-frame saliency heatmaps… / ヒートマップ計算中")
+        log("Heatmaps + Whisper speech-to-text… / ヒートマップ・音声書き起こし中")
         r = sandbox.process.exec(f"python {REMOTE_DIR}/analyze_video.py {src} {out}", timeout=600)
         if r.exit_code != 0:
             raise RuntimeError(f"analysis failed: {r.result[-800:]}")
         log(f"Sandbox: {r.result.strip()}")
-        return json.loads(sandbox.fs.download_file(out))
+        result = json.loads(sandbox.fs.download_file(out))
+        if "proxy ok" in r.result:
+            result["proxy"] = sandbox.fs.download_file(f"{REMOTE_DIR}/proxy.mp4")
+            log(f"Browser-friendly 480p proxy: {len(result['proxy']) / 1e6:.1f} MB")
+        return result
     finally:
         daytona.delete(sandbox)
         log("Sandbox deleted. / サンドボックス削除")
@@ -47,8 +52,11 @@ def analyze_locally(media: bytes, filename: str, log=print) -> dict:
         src = os.path.join(d, "input" + (Path(filename).suffix or ".mp4"))
         out = os.path.join(d, "result.json")
         Path(src).write_bytes(media)
-        subprocess.run([sys.executable, str(SCRIPT), src, out], check=True)
-        return json.loads(Path(out).read_text())
+        r = subprocess.run([sys.executable, str(SCRIPT), src, out], check=True, capture_output=True, text=True)
+        result = json.loads(Path(out).read_text())
+        if "proxy ok" in r.stdout:
+            result["proxy"] = Path(d, "proxy.mp4").read_bytes()
+        return result
 
 
 def analyze(media: bytes, filename: str, log=print) -> tuple[dict, str]:

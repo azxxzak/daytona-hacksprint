@@ -54,10 +54,16 @@ with tab_run:
             log = st.write
             analysis, where = analyze(media, up.name, log)
             log(f"✅ {len(analysis['frames'])} frames analysed ({where})")
-            gaze = persona_gaze(analysis["keyframes"], personas, context, log)
+            proxy = analysis.pop("proxy", None)
+            if proxy:  # play the light 480p H.264 version in the browser
+                media = proxy
+            transcript = analysis.get("transcript", [])
+            log(f"🗣 {len(transcript)} speech segments transcribed")
+            gaze = persona_gaze(analysis["keyframes"], personas, context, log, transcript)
             log(f"✅ {len(gaze)} gaze points from {len(personas)} personas")
             status.update(label="Done / 完了", state="complete", expanded=False)
-        st.session_state.result = {"media": media, "mime": up.type or "video/mp4", "name": up.name,
+        mime = "video/mp4" if proxy else (up.type or "video/mp4")
+        st.session_state.result = {"media": media, "mime": mime, "name": up.name,
                                    "analysis": analysis, "gaze": gaze, "where": where,
                                    "personas": personas}
         st.session_state.chats = {}
@@ -98,6 +104,10 @@ with tab_chat:
         pid = st.selectbox("Persona", list(opts), format_func=opts.get)
         persona = next(p for p in res["personas"] if p["id"] == pid)
         mine = [x for x in res["gaze"] if x["id"] == pid]
+        if res["analysis"].get("transcript"):
+            with st.expander("🗣 Transcript / 書き起こし"):
+                for s in res["analysis"]["transcript"]:
+                    st.write(f"`{s['start']:.0f}s` {s['text']}")
         chats = st.session_state.setdefault("chats", {})
         history = chats.setdefault(pid, [])
         for m in history:
@@ -107,6 +117,6 @@ with tab_chat:
         if q:
             st.chat_message("user").write(q)
             kf = res["analysis"]["keyframes"][0] if res["analysis"]["keyframes"] else None
-            ans = chat_with_persona(persona, mine, history, q, kf)
+            ans = chat_with_persona(persona, mine, history, q, kf, res["analysis"].get("transcript"))
             st.chat_message("assistant").write(ans)
             history += [{"role": "user", "content": q}, {"role": "assistant", "content": ans}]

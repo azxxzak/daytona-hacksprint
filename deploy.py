@@ -60,7 +60,7 @@ def deploy():
     sb.process.create_session("web")
     sb.process.execute_session_command("web", SessionExecuteRequest(
         command=(f"cd {APP_DIR} && python -m streamlit run app.py --server.port {PORT} "
-                 "--server.address 0.0.0.0 --server.headless true --server.maxUploadSize 100 "
+                 "--server.address 0.0.0.0 --server.headless true --server.maxUploadSize 500 "
                  "--server.enableCORS false --server.enableXsrfProtection false"),
         run_async=True))
 

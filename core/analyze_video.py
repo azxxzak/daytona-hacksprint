@@ -15,8 +15,53 @@ import numpy as np
 
 GRID_W, GRID_H = 48, 27
 SAMPLE_FPS = 2.0
-MAX_FRAMES = 90
-N_KEYFRAMES = 6
+MAX_FRAMES = 240          # 3-min video -> one heatmap every ~0.75 s
+KEYFRAME_EVERY_S = 10     # persona gaze sampled every 10 s
+MIN_KEYFRAMES, MAX_KEYFRAMES = 6, 18
+
+
+def transcribe(src: str) -> list:
+    """Speech-to-text with timestamps (Whisper, CPU). Returns [] if no speech or on failure."""
+    try:
+        import os
+
+        from faster_whisper import WhisperModel
+        import subprocess
+
+        import imageio_ffmpeg
+        # Decode audio with ffmpeg ourselves (avoids PyAV version issues): 16 kHz mono float32.
+        raw = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-loglevel", "error", "-i", src, "-vn",
+                              "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+                             capture_output=True, timeout=300).stdout
+        audio = np.frombuffer(raw, dtype=np.float32)
+        if audio.size < 16000:
+            return []
+        model = WhisperModel(os.getenv("WHISPER_MODEL", "base"), device="cpu", compute_type="int8")
+        segments, info = model.transcribe(audio, vad_filter=True, beam_size=1)
+        out = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
+               for s in segments if s.text.strip()]
+        print(f"speech language={info.language} p={info.language_probability:.2f}")
+        return out
+    except Exception as e:  # noqa: BLE001
+        print("transcribe failed:", e)
+        return []
+
+
+def make_proxy(src: str, dst: str) -> bool:
+    """Shrink to 480p H.264 + AAC so any browser can play it and the page stays light."""
+    try:
+        import subprocess
+
+        import imageio_ffmpeg
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", src,
+                            "-vf", "scale='min(854,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
+                            "-crf", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k",
+                            "-movflags", "+faststart", dst], capture_output=True, text=True, timeout=600)
+        return r.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        print("proxy failed:", e)
+        return False
 
 
 def saliency(frame_bgr: np.ndarray) -> np.ndarray:
@@ -58,6 +103,10 @@ def read_frames(path: str):
         if not ok:
             break
         if idx % step == 0:
+            fh, fw = frame.shape[:2]
+            s = 768 / max(fh, fw)
+            if s < 1:  # keep memory low for long / 4K videos
+                frame = cv2.resize(frame, (int(fw * s), int(fh * s)), interpolation=cv2.INTER_AREA)
             frames.append((idx / fps, frame))
         idx += 1
     cap.release()
@@ -81,7 +130,8 @@ def main(src: str, out: str):
             "peak": [round((peak[1] + 0.5) / GRID_W, 3), round((peak[0] + 0.5) / GRID_H, 3)],
         })
 
-    picks = np.linspace(0, len(frames) - 1, min(N_KEYFRAMES, len(frames))).round().astype(int)
+    n_kf = int(np.clip(duration / KEYFRAME_EVERY_S, MIN_KEYFRAMES, MAX_KEYFRAMES))
+    picks = np.linspace(0, len(frames) - 1, min(n_kf, len(frames))).round().astype(int)
     for i in sorted(set(picks.tolist())):
         t, frame = frames[i]
         scale = 768 / max(w, h)
@@ -89,9 +139,16 @@ def main(src: str, out: str):
         ok, buf = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
         result["keyframes"].append({"t": round(t, 3), "jpg_b64": base64.b64encode(buf).decode()})
 
+    if duration > 0:
+        result["transcript"] = transcribe(src)
+        print(f"transcript segments={len(result['transcript'])}")
+
     with open(out, "w") as fh:
-        json.dump(result, fh)
+        json.dump(result, fh, ensure_ascii=False)
     print(f"ok frames={len(result['frames'])} keyframes={len(result['keyframes'])}")
+    if duration > 0:
+        proxy = out.rsplit("/", 1)[0] + "/proxy.mp4" if "/" in out else "proxy.mp4"
+        print("proxy", "ok" if make_proxy(src, proxy) else "failed")
 
 
 if __name__ == "__main__":

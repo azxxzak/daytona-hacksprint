@@ -78,6 +78,13 @@ function draw(){
     }
     rows.push({p, g: g.cur});
   }
+  const seg = (D.transcript || []).find(s => t >= s.start && t <= s.end);
+  if (seg) {
+    ctx.font = `bold ${Math.max(11, Math.min(18, w / 38))}px sans-serif`; ctx.textAlign = 'center';
+    const tw = ctx.measureText(seg.text).width;
+    ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(w/2 - tw/2 - 8, h - 46, tw + 16, 26);
+    ctx.fillStyle = '#fff'; ctx.fillText(seg.text, w/2, h - 27); ctx.textAlign = 'start';
+  }
   rows.sort((a, b) => b.g.interest - a.g.interest);
   document.getElementById('avg').textContent = n ? `avg interest ${(sum/n).toFixed(2)} / 5` : '';
   document.getElementById('side').innerHTML = rows.map(({p, g}) => `
@@ -101,7 +108,8 @@ def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict],
     data = {"grid": analysis["grid"],
             "frames": [{"t": f["t"], "heat": f["heat"]} for f in analysis["frames"]],
             "personas": [{k: p.get(k) for k in ("id", "name", "age", "gender", "occupation", "color")} for p in personas],
-            "gaze": gaze}
+            "gaze": gaze,
+            "transcript": analysis.get("transcript", [])}
     return (TEMPLATE.replace("__MEDIA__", tag)
             .replace("__DATA__", json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/"))
             .replace("__H__", str(height - 60)))
