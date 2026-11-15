@@ -11,16 +11,14 @@ from PIL import Image
 
 load_dotenv()
 
-from core import avatars  # noqa: E402
+from core import avatars, ui  # noqa: E402
 from core.gaze import chat_with_persona, persona_gaze  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
 from core.player import render_player  # noqa: E402
 from core.sandbox import analyze  # noqa: E402
 
 st.set_page_config(page_title="AdLens", page_icon="👁", layout="wide")
-st.title("👁 AdLens — AI audience panel for ads")
-st.caption("Upload a video or banner → Daytona sandbox computes attention heatmaps → "
-           "hundreds of personas watch it and react in real time. / 広告をAIペルソナパネルで事前検証")
+st.markdown(ui.CSS, unsafe_allow_html=True)
 
 # ---------------- Audience builder ----------------
 with st.sidebar:
@@ -42,30 +40,33 @@ with st.sidebar:
 
 personas = st.session_state.personas.to_dict("records")
 
+# Portraits are generated automatically for any persona that doesn't have one yet (cached on disk).
+if avatars.available():
+    tried = st.session_state.setdefault("avatar_tried", set())
+    missing = [p for p in personas if not avatars.cached(p) and avatars.key(p) not in tried]
+    if missing:
+        with st.spinner(f"🎨 Generating {len(missing)} persona portraits… / 顔写真を生成中"):
+            avatars.generate_all(missing, st.sidebar.caption)
+        tried.update(avatars.key(p) for p in missing)
+
+st.markdown(ui.hero(len(personas), age, genders), unsafe_allow_html=True)
+
 tab_run, tab_panel, tab_chat = st.tabs(["▶️ Test ad / 広告テスト", "👥 Panel / パネル", "💬 Interview / インタビュー"])
 
 def avatar_map(ps):
     return {p["id"]: img for p in ps if (img := avatars.cached(p))}
 
 
+def avatar_urls(ps):
+    return {k: avatars.data_url(v) for k, v in avatar_map(ps).items()}
+
+
 with tab_panel:
-    st.write(f"{len(personas)} personas")
-    if avatars.available():
-        missing = [p for p in personas if not avatars.cached(p)]
-        if missing and st.button(f"🎨 Generate portraits for {len(missing)} personas / 顔写真を生成"):
-            with st.spinner(f"Generating {len(missing)} portraits with {avatars.IMAGE_MODEL}…"):
-                avatars.generate_all(missing, st.write)
-    else:
+    if not avatars.available():
         st.caption("Add OPENAI_API_KEY to .env to generate persona portraits.")
-    amap = avatar_map(personas)
-    if amap:
-        cols = st.columns(6)
-        for i, p in enumerate(personas):
-            with cols[i % 6]:
-                if p["id"] in amap:
-                    st.image(amap[p["id"]], use_container_width=True)
-                st.caption(f"**{p['name']}** {p['age']} · {p.get('occupation', '')}")
-    st.dataframe(st.session_state.personas.drop(columns=["color"]), use_container_width=True, hide_index=True)
+    st.markdown(ui.persona_cards(personas, avatar_urls(personas)), unsafe_allow_html=True)
+    with st.expander("Raw data / データ"):
+        st.dataframe(st.session_state.personas.drop(columns=["color"]), use_container_width=True, hide_index=True)
 
 # ---------------- Run analysis ----------------
 with tab_run:
@@ -95,12 +96,21 @@ with tab_run:
 
     res = st.session_state.get("result")
     if res:
-        st.caption(f"Heatmaps computed in: **{res['where']}** sandbox · {res['name']}")
+        g = pd.DataFrame(res["gaze"])
+        if not g.empty:
+            per = g.groupby("id")["interest"].mean()
+            top = g["looking_at"].str.lower().value_counts()
+            st.markdown(ui.kpis([
+                ("Avg interest / 平均興味", f"{g['interest'].mean():.1f} / 5", f"{len(per)} personas"),
+                ("Would engage / 好意的", f"{(per >= 3.5).mean() * 100:.0f}%", "avg interest ≥ 3.5"),
+                ("Top focus / 最注目", (top.index[0][:22] if len(top) else "-"), f"{top.iloc[0] if len(top) else 0} looks"),
+                ("Speech / 音声", f"{len(res['analysis'].get('transcript', []))} lines", "Whisper in sandbox"),
+                ("Compute / 実行環境", res["where"].title(), f"{len(res['analysis']['frames'])} heatmap frames"),
+            ]), unsafe_allow_html=True)
         components.html(render_player(res["media"], res["mime"], res["analysis"], res["personas"], res["gaze"],
-                                      avatars={k: avatars.data_url(v) for k, v in avatar_map(res["personas"]).items()}),
+                                      avatars=avatar_urls(res["personas"])),
                         height=620, scrolling=False)
 
-        g = pd.DataFrame(res["gaze"])
         if not g.empty:
             p = pd.DataFrame(res["personas"])[["id", "age", "gender"]]
             g = g.merge(p, on="id")
@@ -134,8 +144,7 @@ with tab_chat:
         chats = st.session_state.setdefault("chats", {})
         history = chats.setdefault(pid, [])
         face = avatars.cached(persona)
-        if face:
-            st.image(face, width=120)
+        st.markdown(ui.profile(persona, avatars.data_url(face) if face else None), unsafe_allow_html=True)
         bot = Image.open(io.BytesIO(face)) if face else None
         for m in history:
             text = m["content"] if isinstance(m["content"], str) else m["content"][-1]["text"]

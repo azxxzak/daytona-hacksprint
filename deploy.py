@@ -12,7 +12,7 @@ from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 ROOT = Path(__file__).parent
-FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/analyze_video.py", "core/gaze.py",
+FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/ui.py", ".streamlit/config.toml", "core/analyze_video.py", "core/gaze.py",
          "core/personas.py", "core/player.py", "core/sandbox.py"]
 NAME = "adlens-demo"
 PORT = 8501
@@ -48,7 +48,7 @@ def deploy():
         language="python", env_vars=secrets, labels={"app": NAME}, auto_stop_interval=0))
     print("sandbox", sb.id)
 
-    sb.process.exec(f"mkdir -p {APP_DIR}/core")
+    sb.process.exec(f"mkdir -p {APP_DIR}/core {APP_DIR}/.streamlit")
     for f in FILES:
         p = ROOT / f
         sb.fs.upload_file(p.read_bytes() if p.exists() else b"", f"{APP_DIR}/{f}")

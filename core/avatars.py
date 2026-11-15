@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 CACHE = Path(__file__).resolve().parent.parent / "cache" / "avatars"
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2.6-sunburst")
 
 
 def available() -> bool:
@@ -24,8 +24,8 @@ def _prompt(p: dict) -> str:
             "plain softly blurred background, looking at the camera. No text, no logos.")
 
 
-def _key(p: dict) -> str:
-    return hashlib.sha1(_prompt(p).encode()).hexdigest()[:16]
+def key(p: dict) -> str:
+    return hashlib.sha1((IMAGE_MODEL + _prompt(p)).encode()).hexdigest()[:16]
 
 
 def _thumb(png: bytes, size=160) -> bytes:
@@ -37,7 +37,7 @@ def _thumb(png: bytes, size=160) -> bytes:
 
 
 def cached(p: dict) -> bytes | None:
-    f = CACHE / f"{_key(p)}.jpg"
+    f = CACHE / f"{key(p)}.jpg"
     return f.read_bytes() if f.exists() else None
 
 
@@ -49,7 +49,7 @@ def generate_one(p: dict) -> bytes:
     r = OpenAI().images.generate(model=IMAGE_MODEL, prompt=_prompt(p), size="1024x1024", quality="low", n=1)
     jpg = _thumb(base64.b64decode(r.data[0].b64_json))
     CACHE.mkdir(parents=True, exist_ok=True)
-    (CACHE / f"{_key(p)}.jpg").write_bytes(jpg)
+    (CACHE / f"{key(p)}.jpg").write_bytes(jpg)
     return jpg
 
 
