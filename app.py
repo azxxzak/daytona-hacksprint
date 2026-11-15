@@ -82,6 +82,9 @@ with tab_run:
                 media = proxy
             transcript = analysis.get("transcript", [])
             log(f"{len(transcript)} spoken lines transcribed")
+            if not transcript and proxy:
+                st.warning("No speech was transcribed, so viewers will judge the visuals only. "
+                           "Check the sandbox log above for a 'transcribe failed' line. / 音声を書き起こせませんでした。")
             gaze = persona_gaze(analysis["keyframes"], personas, context, log, transcript)
             log(f"{len(gaze)} reactions from {len(personas)} viewers")
             status.update(label="Finished watching / 視聴完了", state="complete", expanded=False)

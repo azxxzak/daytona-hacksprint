@@ -6,3 +6,5 @@ pandas
 numpy
 opencv-python-headless
 openai
+faster-whisper
+imageio-ffmpeg
