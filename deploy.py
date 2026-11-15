@@ -57,7 +57,12 @@ def deploy():
         sb.process.exec(f"mkdir -p {APP_DIR}/cache/avatars")
         for f in faces:
             sb.fs.upload_file(f.read_bytes(), f"{APP_DIR}/cache/avatars/{f.name}")
-    print("uploaded", len(FILES), "files +", len(faces), "portraits; installing deps…")
+    saved = [f for f in (ROOT / "reports").glob("*/*") if f.is_file()]
+    for f in saved:  # ship saved reports so the demo link opens with them
+        rel = f.relative_to(ROOT).as_posix()
+        sb.process.exec(f"mkdir -p '{APP_DIR}/{Path(rel).parent.as_posix()}'")
+        sb.fs.upload_file(f.read_bytes(), f"{APP_DIR}/{rel}")
+    print("uploaded", len(FILES), "files +", len(faces), "portraits +", len(saved), "report files; installing deps…")
     r = sb.process.exec(f"cd {APP_DIR} && pip install -q -r requirements.txt", timeout=600)
     if r.exit_code != 0:
         raise SystemExit(r.result[-1500:])
