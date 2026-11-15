@@ -1,5 +1,7 @@
 daytona
-fastapi
-uvicorn[standard]
-python-dotenv
 anthropic
+streamlit
+python-dotenv
+pandas
+numpy
+opencv-python-headless

@@ -1,0 +1,87 @@
+"""Persona panel: load from a People-Model-style CSV, or sample synthetically.
+
+CSV columns recognised (any subset; extra columns are kept as traits):
+  id, name, age, gender, region, occupation, income, interests, media, values
+"""
+import random
+
+import pandas as pd
+
+FIRST = {"F": ["Yui", "Haruka", "Aoi", "Sakura", "Mei", "Yoko", "Keiko", "Naomi", "Rin", "Emi"],
+         "M": ["Haruto", "Ren", "Sota", "Takumi", "Kenji", "Hiroshi", "Daiki", "Yuto", "Kaito", "Shin"]}
+REGIONS = [("Tokyo", .30), ("Osaka", .15), ("Kanagawa", .12), ("Aichi", .10), ("Fukuoka", .08),
+           ("Hokkaido", .08), ("Kyoto", .07), ("Rural town", .10)]
+OCCUPATIONS = {(15, 22): ["University student", "High-school student", "Part-time worker"],
+               (23, 39): ["Office worker", "Engineer", "Designer", "Nurse", "Sales", "Freelancer"],
+               (40, 64): ["Manager", "Civil servant", "Shop owner", "Teacher", "Homemaker"],
+               (65, 99): ["Retired", "Part-time worker", "Volunteer"]}
+INTERESTS = ["anime", "gaming", "fashion", "beauty", "cooking", "travel", "fitness", "investing",
+             "cars", "camping", "K-pop", "baseball", "soccer", "coffee", "tech gadgets", "pets",
+             "parenting", "gardening", "photography", "sustainability"]
+MEDIA = ["TikTok", "Instagram", "YouTube", "X (Twitter)", "LINE", "TV", "Newspaper", "Podcasts"]
+TRAITS = ["skeptical of ads", "impulsive buyer", "price-sensitive", "brand-loyal",
+          "values quality", "trend follower", "busy, skims quickly", "detail-oriented",
+          "eco-conscious", "easily bored"]
+COLORS = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0",
+          "#f032e6", "#bcf60c", "#fabebe", "#008080", "#e6beff", "#9a6324", "#fffac8"]
+
+
+def _weighted(options):
+    names, weights = zip(*options)
+    return random.choices(names, weights)[0]
+
+
+def _occupation(age):
+    for (lo, hi), jobs in OCCUPATIONS.items():
+        if lo <= age <= hi:
+            return random.choice(jobs)
+    return "Office worker"
+
+
+def sample_personas(n, age_range, genders, seed=42):
+    random.seed(seed)
+    out = []
+    for i in range(n):
+        g = random.choice(genders)
+        age = random.randint(*age_range)
+        income = random.choice(["<3M JPY", "3-5M JPY", "5-8M JPY", "8M+ JPY"] if age >= 23 else ["<1M JPY"])
+        out.append({
+            "id": f"P{i + 1:03d}",
+            "name": random.choice(FIRST[g]),
+            "age": age,
+            "gender": "Female" if g == "F" else "Male",
+            "region": _weighted(REGIONS),
+            "occupation": _occupation(age),
+            "income": income,
+            "interests": ", ".join(random.sample(INTERESTS, 3)),
+            "media": ", ".join(random.sample(MEDIA, 2)),
+            "values": ", ".join(random.sample(TRAITS, 2)),
+        })
+    return pd.DataFrame(out)
+
+
+def load_csv(file, age_range, genders):
+    df = pd.read_csv(file)
+    df.columns = [c.strip().lower() for c in df.columns]
+    if "id" not in df.columns:
+        df.insert(0, "id", [f"P{i + 1:03d}" for i in range(len(df))])
+    if "age" in df.columns:
+        df = df[df["age"].between(*age_range)]
+    if "gender" in df.columns:
+        wanted = {"F": ("f", "female", "女性", "女"), "M": ("m", "male", "男性", "男")}
+        ok = {v for g in genders for v in wanted[g]}
+        df = df[df["gender"].astype(str).str.lower().isin(ok)]
+    if "name" not in df.columns:
+        df.insert(1, "name", df["id"])
+    return df.reset_index(drop=True)
+
+
+def with_colors(df):
+    df = df.copy()
+    df["color"] = [COLORS[i % len(COLORS)] for i in range(len(df))]
+    return df
+
+
+def describe(p: dict) -> str:
+    skip = {"color"}
+    return "; ".join(f"{k}: {v}" for k, v in p.items() if k not in skip and pd.notna(v))
