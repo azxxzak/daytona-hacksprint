@@ -4,12 +4,25 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from daytona import Daytona
 
 SCRIPT = Path(__file__).with_name("analyze_video.py")
 REMOTE_DIR = "/tmp/adlab"
+
+
+def _retry(fn, *args, tries=5, log=print, **kw):
+    """Fresh sandboxes sometimes reset the first connections; retry with backoff."""
+    for i in range(tries):
+        try:
+            return fn(*args, **kw)
+        except Exception as e:  # noqa: BLE001
+            if i == tries - 1:
+                raise
+            log(f"Retrying sandbox call ({i + 1}/{tries - 1}): {str(e)[:80]}")
+            time.sleep(2 * (i + 1))
 
 
 def analyze_in_daytona(media: bytes, filename: str, log=print) -> dict:
@@ -19,14 +32,14 @@ def analyze_in_daytona(media: bytes, filename: str, log=print) -> dict:
     try:
         ext = Path(filename).suffix or ".mp4"
         src, out = f"{REMOTE_DIR}/input{ext}", f"{REMOTE_DIR}/result.json"
-        sandbox.process.exec(f"mkdir -p {REMOTE_DIR}")
+        _retry(sandbox.process.exec, f"mkdir -p {REMOTE_DIR}", log=log)
         log("Uploading media + analysis script… / アップロード中")
-        sandbox.fs.upload_file(media, src)
-        sandbox.fs.upload_file(SCRIPT.read_bytes(), f"{REMOTE_DIR}/analyze_video.py")
+        _retry(sandbox.fs.upload_file, media, src, log=log)
+        _retry(sandbox.fs.upload_file, SCRIPT.read_bytes(), f"{REMOTE_DIR}/analyze_video.py", log=log)
 
         log("Installing OpenCV in sandbox… / 環境構築中")
-        r = sandbox.process.exec("pip install -q opencv-python-headless numpy imageio-ffmpeg faster-whisper",
-                                 timeout=400)
+        r = _retry(sandbox.process.exec, "pip install -q opencv-python-headless numpy imageio-ffmpeg faster-whisper",
+                   timeout=400, tries=3, log=log)
         if r.exit_code != 0:
             raise RuntimeError(f"pip failed: {r.result[-500:]}")
 
@@ -35,14 +48,17 @@ def analyze_in_daytona(media: bytes, filename: str, log=print) -> dict:
         if r.exit_code != 0:
             raise RuntimeError(f"analysis failed: {r.result[-800:]}")
         log(f"Sandbox: {r.result.strip()}")
-        result = json.loads(sandbox.fs.download_file(out))
+        result = json.loads(_retry(sandbox.fs.download_file, out, log=log))
         if "proxy ok" in r.result:
-            result["proxy"] = sandbox.fs.download_file(f"{REMOTE_DIR}/proxy.mp4")
+            result["proxy"] = _retry(sandbox.fs.download_file, f"{REMOTE_DIR}/proxy.mp4", log=log)
             log(f"Browser-friendly 480p proxy: {len(result['proxy']) / 1e6:.1f} MB")
         return result
     finally:
-        daytona.delete(sandbox)
-        log("Sandbox deleted. / サンドボックス削除")
+        try:
+            _retry(daytona.delete, sandbox, tries=3, log=log)
+            log("Sandbox deleted. / サンドボックス削除")
+        except Exception as e:  # noqa: BLE001
+            log(f"Could not delete sandbox: {e}")
 
 
 def analyze_locally(media: bytes, filename: str, log=print) -> dict:
@@ -60,8 +76,9 @@ def analyze_locally(media: bytes, filename: str, log=print) -> dict:
 
 
 def analyze(media: bytes, filename: str, log=print) -> tuple[dict, str]:
-    try:
-        return analyze_in_daytona(media, filename, log), "daytona"
-    except Exception as e:  # noqa: BLE001 - keep the demo alive
-        log(f"Daytona error: {e}")
-        return analyze_locally(media, filename, log), "local"
+    for attempt in (1, 2):  # a whole second try on a brand-new sandbox before falling back
+        try:
+            return analyze_in_daytona(media, filename, log), "daytona"
+        except Exception as e:  # noqa: BLE001 - keep the demo alive
+            log(f"Daytona error (attempt {attempt}/2): {e}")
+    return analyze_locally(media, filename, log), "local"

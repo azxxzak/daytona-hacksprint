@@ -12,7 +12,7 @@ from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 ROOT = Path(__file__).parent
-FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/ui.py", ".streamlit/config.toml", "core/analyze_video.py", "core/gaze.py",
+FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/ui.py", "core/reports.py", ".streamlit/config.toml", "core/analyze_video.py", "core/gaze.py",
          "core/personas.py", "core/player.py", "core/sandbox.py"]
 NAME = "adlens-demo"
 PORT = 8501
