@@ -64,6 +64,10 @@ def analyze_in_daytona(media: bytes, filename: str, log=print) -> dict:
 def analyze_locally(media: bytes, filename: str, log=print) -> dict:
     """Fallback so the demo never dies if the network/sandbox is down."""
     log("⚠️ Using local fallback / ローカル実行")
+    return _analyze_here(media, filename)
+
+
+def _analyze_here(media: bytes, filename: str) -> dict:
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "input" + (Path(filename).suffix or ".mp4"))
         out = os.path.join(d, "result.json")
@@ -76,6 +80,11 @@ def analyze_locally(media: bytes, filename: str, log=print) -> dict:
 
 
 def analyze(media: bytes, filename: str, log=print) -> tuple[dict, str]:
+    if os.getenv("DAYTONA_SANDBOX_ID"):
+        # The app itself is running inside a Daytona sandbox, and Daytona does not allow a sandbox
+        # to drive another sandbox's toolbox. Process in this (already isolated) sandbox instead.
+        log("Running inside the AdLens Daytona sandbox / Daytonaサンドボックス内で処理")
+        return _analyze_here(media, filename), "daytona"
     for attempt in (1, 2):  # a whole second try on a brand-new sandbox before falling back
         try:
             return analyze_in_daytona(media, filename, log), "daytona"
