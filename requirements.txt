@@ -8,3 +8,4 @@ opencv-python-headless
 openai
 faster-whisper
 imageio-ffmpeg
+Authlib>=1.3.2

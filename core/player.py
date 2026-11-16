@@ -5,6 +5,9 @@ how interested they are; it can be blended with the image-saliency map and filte
 """
 import base64
 import json
+from html import escape
+
+from core.i18n import STRINGS, t
 
 TEMPLATE = r"""
 <style>
@@ -22,21 +25,21 @@ TEMPLATE = r"""
   #ctl select{font:inherit;padding:3px 6px;border:1px solid #D6DAD5;border-radius:6px;background:#fff;color:#1D2321}
 </style>
 <div id="ctl">
-  <label>Heatmap / ヒートマップ
+  <label>__L_p_heat__
     <select id="mode">
-      <option value="ai">AI viewers' gaze / AI視聴者の視線</option>
-      <option value="mix">AI viewers + image / AI＋画像</option>
-      <option value="img">Image only / 画像のみ</option>
-      <option value="off">Off / なし</option>
+      <option value="ai">__L_p_ai__</option>
+      <option value="mix">__L_p_mix__</option>
+      <option value="img">__L_p_img__</option>
+      <option value="off">__L_p_off__</option>
     </select></label>
-  <label>Who / 対象
+  <label>__L_p_who__
     <select id="seg">
-      <option value="all">Everyone / 全員</option>
-      <option value="a1">Under 25 / 25歳未満</option><option value="a2">25-34</option>
-      <option value="a3">35-44</option><option value="a4">45+</option>
-      <option value="F">Women / 女性</option><option value="M">Men / 男性</option>
+      <option value="all">__L_p_all__</option>
+      <option value="a1">__L_p_u25__</option><option value="a2">25-34</option>
+      <option value="a3">35-44</option><option value="a4">__L_p_45__</option>
+      <option value="F">__L_p_women__</option><option value="M">__L_p_men__</option>
     </select></label>
-  <label><input type="checkbox" id="cDots" checked> Faces / 顔</label>
+  <label><input type="checkbox" id="cDots" checked> __L_p_faces__</label>
   <span>t=<span id="t">0.0</span>s, <span id="avg"></span></span>
 </div>
 <div id="wrap">
@@ -137,11 +140,11 @@ function draw(){
     ctx.fillStyle = '#fff'; ctx.fillText(seg.text, w/2, h - 27); ctx.textAlign = 'start';
   }
   rows.sort((a, b) => b.g.interest - a.g.interest);
-  document.getElementById('avg').textContent = n ? `${n} viewers, average interest ${(sum/n).toFixed(1)} of 5` : 'no viewers in this group';
+  document.getElementById('avg').textContent = n ? D.L.p_avg.replace('{n}', n).replace('{a}', (sum/n).toFixed(1)) : D.L.p_none;
   document.getElementById('side').innerHTML = rows.map(({p, g}) => `
     <div class="row">${p.img ? `<img src="${p.img}" style="width:34px;height:34px;border-radius:50%;border:2px solid ${p.color};flex:0 0 34px">` : `<div class="dot" style="background:${p.color}"></div>`}<div>
       <b>${esc(p.name)}</b> <span class="meta">${esc(p.age)}, ${esc(p.occupation)}</span><br>
-      <span class="meta">Looking at ${esc(g.looking_at)}</span><br>${esc(g.thought)}
+      <span class="meta">${D.L.p_looking}: ${esc(g.looking_at)}</span><br>${esc(D.lang === "en" && g.thought_en ? g.thought_en : g.thought)}
       <div class="bar"><div style="width:${g.interest*20}%"></div></div></div></div>`).join('');
   requestAnimationFrame(draw);
 }
@@ -151,7 +154,7 @@ function draw(){
 
 
 def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict], gaze: list[dict], height=560,
-                  avatars: dict | None = None) -> str:
+                  avatars: dict | None = None, lang: str = "en") -> str:
     avatars = avatars or {}
     src = f"data:{mime};base64,{base64.b64encode(media).decode()}"
     if mime.startswith("video"):
@@ -163,7 +166,11 @@ def render_player(media: bytes, mime: str, analysis: dict, personas: list[dict],
             "personas": [{**{k: p.get(k) for k in ("id", "name", "age", "gender", "occupation", "color")},
                           "img": avatars.get(p["id"])} for p in personas],
             "gaze": gaze,
-            "transcript": analysis.get("transcript", [])}
-    return (TEMPLATE.replace("__MEDIA__", tag)
+            "transcript": analysis.get("transcript", []),
+            "lang": lang, "L": {k: t(k, lang) for k in STRINGS if k.startswith("p_")}}
+    html = TEMPLATE
+    for k in data["L"]:
+        html = html.replace(f"__L_{k}__", escape(data["L"][k]))
+    return (html.replace("__MEDIA__", tag)
             .replace("__DATA__", json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/"))
             .replace("__H__", str(height - 60)))

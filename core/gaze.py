@@ -26,7 +26,8 @@ PROMPT = """You simulate a consumer research panel watching an advertisement.
 This is the frame at t={t:.1f}s{context}.
 {speech}
 For EACH persona below, predict realistically where their eyes land first in this frame,
-how interested they are, and a short inner thought IN JAPANESE (as that person would think it).
+how interested they are, and a short inner thought IN JAPANESE (as that person would think it),
+plus a natural English translation of that thought.
 Be honest and varied: many people ignore ads, get bored, or dislike them. Do not be uniformly positive.
 Different people notice different things (price, faces, product, text, logo, background).
 If speech is given, react to the actual words too (a catchphrase, a claim, a price, an awkward line).
@@ -36,7 +37,7 @@ Personas:
 
 Return ONLY a JSON array, one object per persona, in this exact shape:
 [{{"id": "P001", "x": 0.0-1.0, "y": 0.0-1.0, "looking_at": "short English label",
-   "interest": 1-5, "thought": "日本語の短い心の声"}}]
+   "interest": 1-5, "thought": "日本語の短い心の声", "thought_en": "the same thought in English"}}]
 x,y are normalized image coordinates (0,0 = top-left)."""
 
 
@@ -76,7 +77,7 @@ def _ask(keyframe, personas, context, speech=""):
             out.append({"id": str(g["id"]), "t": keyframe["t"],
                         "x": min(max(float(g["x"]), 0), 1), "y": min(max(float(g["y"]), 0), 1),
                         "looking_at": g.get("looking_at", ""), "interest": int(g.get("interest", 3)),
-                        "thought": g.get("thought", "")})
+                        "thought": g.get("thought", ""), "thought_en": g.get("thought_en", "")})
         except (KeyError, ValueError, TypeError):
             continue
     return out

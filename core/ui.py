@@ -1,6 +1,8 @@
 """Styling: a quiet research-notes page around one dark 'screening room' stage."""
 from html import escape
 
+from core.i18n import t
+
 CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap');
@@ -34,23 +36,20 @@ div[data-testid="stTabs"] button p { font-size: 1rem; font-weight: 700; }
 """
 
 
-def masthead() -> str:
-    return ('<div class="mast"><div class="w">AdLens</div><div class="d">'
-            'Show your ad to a panel of AI viewers before it goes live. See where each person looks, '
-            'what they think at every moment, and ask them why. '
-            '<br>配信前に、AIの視聴者パネルで広告をテストします。</div></div>')
+def masthead(lang="en") -> str:
+    return f'<div class="mast"><div class="w">AdLens</div><div class="d">{escape(t("tagline", lang))}</div></div>'
 
 
-def verdict(g, personas) -> tuple[str, str]:
+def verdict(g, personas, lang="en") -> tuple[str, str]:
     per = g.groupby("id")["interest"].mean()
     curve = g.groupby("t")["interest"].mean()
     top = g["looking_at"].str.lower().value_counts()
     engaged = int((per >= 3.5).sum())
     low_t = curve.idxmin() if len(curve) > 1 else None
-    main = f"{engaged} of {len(per)} viewers stayed interested."
+    main = t("v_main", lang, e=engaged, n=len(per))
     if low_t is not None:
-        main += f" Attention dipped lowest at {int(low_t // 60)}:{int(low_t % 60):02d}."
-    sub = f"Most looked at: {top.index[0]}. Average interest {g['interest'].mean():.1f} out of 5." if len(top) else ""
+        main += t("v_low", lang, t=f"{int(low_t // 60)}:{int(low_t % 60):02d}")
+    sub = t("v_sub", lang, top=top.index[0], avg=f"{g['interest'].mean():.1f}") if len(top) else ""
     return main, sub
 
 
@@ -66,10 +65,11 @@ def roster(personas, img_urls) -> str:
     return f'<div class="roster">{"".join(out)}</div>'
 
 
-def who(p, img_url) -> str:
+def who(p, img_url, lang="en") -> str:
     img = f'<img src="{img_url}" alt="">' if img_url else ""
+    e = lambda k: escape(str(p.get(k, "")))  # noqa: E731
     return (f'<div class="who" style="--c:{p.get("color", "#888")}">{img}<div>'
-            f'<div class="n">{escape(str(p["name"]))}, {escape(str(p["age"]))}</div>'
-            f'<div class="m">{escape(str(p.get("occupation", "")))} in {escape(str(p.get("region", "")))}, '
-            f'income {escape(str(p.get("income", "")))}<br>Into {escape(str(p.get("interests", "")))}. '
-            f'Uses {escape(str(p.get("media", "")))}. {escape(str(p.get("values", "")).capitalize())}.</div></div></div>')
+            f'<div class="n">{e("name")}, {e("age")}</div>'
+            f'<div class="m">{t("who_line", lang, occ=e("occupation"), region=e("region"), income=e("income"))}<br>'
+            f'{t("who_into", lang, x=e("interests"))} {t("who_uses", lang, x=e("media"))} '
+            f'{escape(str(p.get("values", "")).capitalize())}.</div></div></div>')

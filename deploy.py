@@ -12,7 +12,7 @@ from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 ROOT = Path(__file__).parent
-FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/ui.py", "core/reports.py", ".streamlit/config.toml", "core/analyze_video.py", "core/gaze.py",
+FILES = ["app.py", "requirements.txt", "core/__init__.py", "core/avatars.py", "core/ui.py", "core/reports.py", "core/i18n.py", "core/auth.py", ".streamlit/config.toml", "core/analyze_video.py", "core/gaze.py",
          "core/personas.py", "core/player.py", "core/sandbox.py"]
 NAME = "adlens-demo"
 PORT = 8501
@@ -42,7 +42,11 @@ def deploy():
         daytona.delete(old)
 
     secrets = {k: v for k, v in dotenv_values(ROOT / ".env").items()
-               if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY") and v}
+               if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY",
+                        "APP_PASSWORD", "ALLOWED_EMAILS", "ALLOWED_DOMAINS") and v}
+    if not (secrets.get("APP_PASSWORD") or (ROOT / ".streamlit" / "secrets.toml").exists()):
+        raise SystemExit("Refusing to deploy without sign-in: set APP_PASSWORD in .env "
+                         "or configure Google sign-in in .streamlit/secrets.toml")
     print("creating sandbox…")
     sb = daytona.create(CreateSandboxFromSnapshotParams(
         language="python", env_vars=secrets, labels={"app": NAME}, auto_stop_interval=0))
@@ -52,6 +56,8 @@ def deploy():
     for f in FILES:
         p = ROOT / f
         sb.fs.upload_file(p.read_bytes() if p.exists() else b"", f"{APP_DIR}/{f}")
+    if (ROOT / ".streamlit" / "secrets.toml").exists():  # Google sign-in config (redirect_uri must be the deploy URL)
+        sb.fs.upload_file((ROOT / ".streamlit" / "secrets.toml").read_bytes(), f"{APP_DIR}/.streamlit/secrets.toml")
     faces = sorted((ROOT / "cache" / "avatars").glob("*.jpg"))
     if faces:  # ship already-generated portraits so the demo doesn't pay for them twice
         sb.process.exec(f"mkdir -p {APP_DIR}/cache/avatars")
