@@ -21,7 +21,7 @@ from sqlmodel import select  # noqa: E402
 
 from backend import auth, db, jobs  # noqa: E402
 from backend.db import Test, User  # noqa: E402
-from core import avatars  # noqa: E402
+from core import avatars, blobstore  # noqa: E402
 from core import library, llm, persona_profile, themes as themes_mod  # noqa: E402
 from core import talk as talk_mod  # noqa: E402
 from core.gaze import chat_with_persona  # noqa: E402
@@ -29,6 +29,7 @@ from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 db.init()
+blobstore.start()  # Supabase storage sync (no-op when not configured)
 app = FastAPI(title="AdLens API", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 MAX_UPLOAD = 500 * 1024 * 1024
@@ -128,7 +129,7 @@ def avatar(key: str, user: User = auth.CurrentUser):
     if not re.fullmatch(r"[a-f0-9]{16}", key):
         raise HTTPException(404, "Not found.")
     jpg = AVATAR_INDEX / f"{key}.jpg"
-    if not jpg.exists():
+    if not blobstore.ensure_local(jpg):
         idx = AVATAR_INDEX / f"{key}.json"
         if not idx.exists() or not avatars.available():
             raise HTTPException(404, "Portrait not available.")
@@ -220,13 +221,14 @@ def delete_test(test_id: str, user: User = auth.CurrentUser):
         s.delete(s.get(Test, t.id))
         s.commit()
     shutil.rmtree(db.test_dir(t.id), ignore_errors=True)
+    blobstore.delete_prefix(db.DATA / "tests" / t.id)
 
 
 @app.get("/api/tests/{test_id}/media")
 def media(test_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
     f = db.test_dir(t.id) / "media.bin"
-    if not f.exists():
+    if not blobstore.ensure_local(f):
         raise HTTPException(404, "Media is not ready yet.")
     return FileResponse(f, media_type=t.mime)
 
@@ -397,7 +399,9 @@ def set_talk_mode(test_id: str, talk_id: str, body: TalkModeIn, user: User = aut
 @app.delete("/api/tests/{test_id}/talks/{talk_id}", status_code=204)
 def delete_talk(test_id: str, talk_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
-    _talk_file(t, talk_id).unlink()
+    f = _talk_file(t, talk_id)
+    f.unlink()
+    blobstore.delete_prefix(f)
 
 
 @app.post("/api/tests/{test_id}/talks/{talk_id}/ask")

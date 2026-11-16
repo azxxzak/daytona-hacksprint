@@ -2,6 +2,7 @@
 
   python -m backend.manage create-user someone@example.com "Name"     # asks for the password
   python -m backend.manage import-legacy someone@example.com          # copy old Streamlit reports into this account
+  python -m backend.manage migrate-sqlite                             # copy users + tests from data/adlens.db into DATABASE_URL
 """
 import getpass
 import json
@@ -67,11 +68,36 @@ def import_legacy(email: str):
     print("imported", n, "reports for", email)
 
 
+def migrate_sqlite():
+    """One-off: copy rows from the local SQLite file into the configured DATABASE_URL (e.g. Supabase)."""
+    from sqlmodel import Session, create_engine
+    src = create_engine(f"sqlite:///{db.DATA / 'adlens.db'}")
+    if db.DB_URL.startswith("sqlite"):
+        sys.exit("DATABASE_URL is not set to a different database.")
+    db.init()
+    n = {"users": 0, "tests": 0}
+    with Session(src) as a, db.session() as b:
+        for model, label in ((User, "users"), (Test, "tests")):
+            for row in a.exec(select(model)).all():
+                key = row.email if model is User else row.id
+                exists = (b.exec(select(User).where(User.email == key)).first() if model is User else b.get(Test, key))
+                if not exists:
+                    data = row.model_dump()
+                    if model is User:
+                        data.pop("id", None)
+                    b.add(model(**data))
+                    n[label] += 1
+        b.commit()
+    print("migrated", n)
+
+
 if __name__ == "__main__":
     cmd, *args = sys.argv[1:] or ["help"]
     if cmd == "create-user":
         create_user(*args)
     elif cmd == "import-legacy":
         import_legacy(*args)
+    elif cmd == "migrate-sqlite":
+        migrate_sqlite()
     else:
         print(__doc__)

@@ -16,3 +16,5 @@ sqlmodel
 streamlit
 uvicorn[standard]
 python-pptx
+psycopg[binary]
+httpx

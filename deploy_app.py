@@ -73,7 +73,11 @@ def _deploy():
     admin, admin_pw = env("ADLENS_ADMIN_EMAIL"), env("ADLENS_ADMIN_PASSWORD")
     if not admin or len(admin_pw) < 10:
         raise SystemExit("Set ADLENS_ADMIN_EMAIL and ADLENS_ADMIN_PASSWORD (10+ chars) in .env first.")
-    keys = {k: env(k) for k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY") if env(k)}
+    keys = {k: env(k) for k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY",
+                                "DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_BUCKET")
+            if env(k)}
+    if not keys.get("DATABASE_URL") or not keys.get("SUPABASE_SERVICE_ROLE_KEY"):
+        print("WARNING: no Supabase settings - data in this deploy will be lost on the next redeploy")
     keys.update(SECRET_KEY=secrets.token_urlsafe(48), COOKIE_SECURE="1", ADLENS_DATA=f"{APP}/data")
 
     old = find_all()  # torn down only after the new one is serving

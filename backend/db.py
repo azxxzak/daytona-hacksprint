@@ -9,8 +9,19 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.getenv("ADLENS_DATA", ROOT / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(os.getenv("DATABASE_URL", f"sqlite:///{DATA / 'adlens.db'}"),
-                       connect_args={"check_same_thread": False} if not os.getenv("DATABASE_URL") else {})
+def _db_url() -> str:
+    url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        return f"sqlite:///{DATA / 'adlens.db'}"
+    for old in ("postgres://", "postgresql://"):  # Supabase gives plain postgresql:// — use the psycopg 3 driver
+        if url.startswith(old):
+            return "postgresql+psycopg://" + url[len(old):]
+    return url
+
+
+DB_URL = _db_url()
+engine = create_engine(DB_URL, pool_pre_ping=True,
+                       connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {})
 
 
 def now():
@@ -54,5 +65,8 @@ def session():
 
 def test_dir(test_id: str) -> Path:
     d = DATA / "tests" / test_id
+    if not d.exists():
+        from core import blobstore
+        blobstore.ensure_dir(d)  # restore a test that only exists in Supabase storage
     d.mkdir(parents=True, exist_ok=True)
     return d
