@@ -3,6 +3,7 @@
   python deploy.py            # deploy (or redeploy) and print URL
   python deploy.py --delete   # tear the demo sandbox down
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,9 +37,11 @@ def delete():
 
 
 def deploy():
-    secrets = {k: v for k, v in dotenv_values(ROOT / ".env").items()
-               if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY",
-                        "APP_PASSWORD", "ALLOWED_EMAILS", "ALLOWED_DOMAINS") and v}
+    wanted = ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY",
+              "APP_PASSWORD", "ALLOWED_EMAILS", "ALLOWED_DOMAINS")
+    env_file = dotenv_values(ROOT / ".env")
+    # .env first, then the shell environment (so `APP_PASSWORD=... python deploy.py` also works)
+    secrets = {k: v for k in wanted if (v := (env_file.get(k) or os.getenv(k) or "").strip())}
     if not (secrets.get("APP_PASSWORD") or (ROOT / ".streamlit" / "secrets.toml").exists()):
         raise SystemExit("Refusing to deploy without sign-in: set APP_PASSWORD in .env "
                          "or configure Google sign-in in .streamlit/secrets.toml")
