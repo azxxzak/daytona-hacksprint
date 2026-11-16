@@ -8,3 +8,4 @@ cache/
 samples/*.json
 reports/
 .streamlit/secrets.toml
+data/
