@@ -36,17 +36,17 @@ def delete():
 
 
 def deploy():
-    old = find_existing()
-    if old:
-        print("removing previous demo sandbox", old.id)
-        daytona.delete(old)
-
     secrets = {k: v for k, v in dotenv_values(ROOT / ".env").items()
                if k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY",
                         "APP_PASSWORD", "ALLOWED_EMAILS", "ALLOWED_DOMAINS") and v}
     if not (secrets.get("APP_PASSWORD") or (ROOT / ".streamlit" / "secrets.toml").exists()):
         raise SystemExit("Refusing to deploy without sign-in: set APP_PASSWORD in .env "
                          "or configure Google sign-in in .streamlit/secrets.toml")
+
+    old = find_existing()  # only tear down the old demo once we know the new one can be deployed
+    if old:
+        print("removing previous demo sandbox", old.id)
+        daytona.delete(old)
     print("creating sandbox…")
     sb = daytona.create(CreateSandboxFromSnapshotParams(
         language="python", env_vars=secrets, labels={"app": NAME}, auto_stop_interval=0))
