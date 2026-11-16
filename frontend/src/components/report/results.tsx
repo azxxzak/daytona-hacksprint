@@ -4,8 +4,9 @@ import { useId, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { AGE_GROUPS, fmtTime, inSegment, mean } from "@/lib/format";
 import type { Test } from "@/lib/types";
+import type { Key } from "@/lib/i18n";
 import { useI18n } from "../i18n-provider";
-import { Card, SectionHeader, cx } from "../ui";
+import { Avatar, Card, SectionHeader, cx } from "../ui";
 
 const W = 800, H = 300, PL = 36, PR = 16, PT = 16, PB = 30;
 
@@ -234,10 +235,74 @@ function Transcript({ test, onSeek }: { test: Test; onSeek: (t: number) => void 
   );
 }
 
+function Themes({ test, onSeek }: { test: Test; onSeek: (t: number) => void }) {
+  const { t } = useI18n();
+  const themes = test.themes;
+  const byId = useMemo(() => new Map(test.personas.map((p) => [p.id, p])), [test.personas]);
+  if (!themes || themes.length === 0) return null;
+  const video = test.media_kind === "video";
+  return (
+    <section aria-label={t("th.title")}>
+      <SectionHeader label={t("th.label")} title={t("th.title")} />
+      <ul className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {themes.map((th) => (
+          <li key={th.id} className="rounded-card bg-surface p-6">
+            <div className="flex items-start justify-between gap-4">
+              <h3 className="text-lg font-bold leading-snug">{th.title}</h3>
+              <span className="tnum shrink-0 text-sm font-medium">{Math.round(th.share * 100)}%</span>
+            </div>
+            <div className="mt-2 h-1.5 rounded-full bg-canvas" role="img" aria-label={t("th.share", { n: Math.round(th.share * 100) })}>
+              <div className="h-full rounded-full bg-ink" style={{ width: Math.round(Math.min(1, th.share) * 100) + "%" }} />
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-ink/80">{th.description}</p>
+            {th.by_segment.length > 0 && (
+              <div className="mt-4">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("th.seg")}</p>
+                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                  {th.by_segment.map((g) => (
+                    <li key={g.segment} className="text-xs">
+                      <span className="flex justify-between text-mute"><span>{t(("seg." + g.segment) as Key)}</span><span className="tnum">{Math.round(g.share * 100)}%</span></span>
+                      <span className="mt-0.5 block h-1 rounded-full bg-canvas"><span className="block h-full rounded-full bg-ink/60" style={{ width: Math.round(Math.min(1, g.share) * 100) + "%" }} /></span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {th.examples.length > 0 && (
+              <ul className="mt-4 space-y-2">
+                {th.examples.slice(0, 3).map((e, i) => {
+                  const p = byId.get(e.persona_id);
+                  const inner = (
+                    <>
+                      {p && <Avatar src={p.avatar_url} name={p.name} color={p.color} rounded="rounded-full" className="size-7 shrink-0" />}
+                      <span className="min-w-0 flex-1 text-[13px] leading-snug">{e.text}</span>
+                      {video && <span className="tnum shrink-0 text-[11px] text-mute">{fmtTime(e.t)}</span>}
+                    </>
+                  );
+                  return (
+                    <li key={i}>
+                      {video ? (
+                        <button type="button" onClick={() => onSeek(e.t)} aria-label={t("th.jump", { t: fmtTime(e.t) })} className="flex w-full items-start gap-2.5 rounded-xl bg-canvas p-2.5 text-left hover:bg-line/60">{inner}</button>
+                      ) : (
+                        <div className="flex items-start gap-2.5 rounded-xl bg-canvas p-2.5">{inner}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function Results({ test, onSeek }: { test: Test; onSeek: (t: number) => void }) {
   const { t } = useI18n();
   return (
     <div className="space-y-6">
+      <Themes test={test} onSeek={onSeek} />
       <Card className="p-6 sm:p-8">
         <SectionHeader label={t("res.curveLabel")} title={t("res.curveTitle")} />
         <div className="mt-6"><InterestChart test={test} /></div>

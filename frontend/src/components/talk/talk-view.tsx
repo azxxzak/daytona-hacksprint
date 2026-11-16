@@ -6,7 +6,8 @@ import { ArrowUp, ChevronDown, ChevronUp, Play, Settings2, Sparkles, Square, Tra
 import { ApiError, api, streamAsk } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import type { Key } from "@/lib/i18n";
-import type { Persona, Talk, TalkMessage, TalkMode, Test } from "@/lib/types";
+import type { Basis, Persona, Talk, TalkMessage, TalkMode, Test } from "@/lib/types";
+import { EvidenceLabel } from "../evidence";
 import { useI18n } from "../i18n-provider";
 import { usePersonaMeta } from "../persona-card";
 import { useToast } from "../toast";
@@ -36,7 +37,7 @@ function Typing({ label }: { label: string }) {
   );
 }
 
-function ReplyCard({ p, text, wide }: { p: Persona; text?: string; wide: boolean }) {
+function ReplyCard({ p, text, wide, basis, because }: { p: Persona; text?: string; wide: boolean; basis?: Basis; because?: string }) {
   const { t } = useI18n();
   const label = usePersonaLabel()(p);
   return (
@@ -46,6 +47,7 @@ function ReplyCard({ p, text, wide }: { p: Persona; text?: string; wide: boolean
         <Avatar src={p.avatar_url} name={p.name} color={p.color} rounded="rounded-full" className="size-10 shrink-0" />
         <div className="min-w-0 flex-1 text-[15px] leading-relaxed">
           {text === undefined ? <Typing label={t("talk.thinking", { name: p.name })} /> : <p className="whitespace-pre-wrap">{text}</p>}
+          {text !== undefined && <EvidenceLabel basis={basis} because={because} className="mt-1.5" />}
         </div>
       </div>
     </div>
@@ -83,6 +85,18 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
   const byId = useMemo(() => new Map(test.personas.map((p) => [p.id, p])), [test.personas]);
   const people = useMemo(() => talk.persona_ids.map((id) => byId.get(id)).filter((p): p is Persona => !!p), [talk.persona_ids, byId]);
   const solo = talk.persona_ids.length === 1 ? people[0] : undefined;
+
+  const [est, setEst] = useState<{ one: number; five: number } | null>(null);
+  useEffect(() => {
+    if (sending) return;
+    let stop = false;
+    const call = (rounds: number) => api<{ usd: number }>(`${base}/estimate`, { method: "POST", json: { rounds } });
+    Promise.all([call(1), call(AUTO_ROUNDS)])
+      .then(([a, b]) => { if (!stop) setEst({ one: a.usd, five: b.usd }); })
+      .catch(() => { if (!stop) setEst(null); });
+    return () => { stop = true; };
+  }, [base, mode, sending]);
+  const usd = (v: number) => (v > 0 && v < 0.01 ? "<$0.01" : "~$" + v.toFixed(2));
 
   const setSug = (v: string | null) => { suggestionRef.current = v; setSuggestion(v); };
 
@@ -185,7 +199,7 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
           case "message":
             received++;
             setThinking((x) => x.filter((id) => id !== ev.data.persona_id));
-            setMessages((m) => [...m, { role: "persona", persona_id: ev.data.persona_id, content: ev.data.content, at: ev.data.at }]);
+            setMessages((m) => [...m, { role: "persona", persona_id: ev.data.persona_id, content: ev.data.content, at: ev.data.at, basis: ev.data.basis, because: ev.data.because }]);
             break;
           case "suggestion":
             setSug(ev.data.content || null);
@@ -283,6 +297,7 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
             placeholder={t("talk.placeholder")}
             className="min-h-[52px] flex-1 resize-none bg-transparent px-2 py-1.5 text-[15px] placeholder:text-mute/70 focus-visible:shadow-none focus-visible:outline-none"
           />
+          {est && <span className="tnum self-center text-[11px] text-mute" aria-label={t("cost.estAria", { v: usd(est.one) })}>{usd(est.one)}</span>}
           <button
             type="button" onClick={() => submit(draft)} disabled={!draft.trim() || busy} aria-label={t("talk.send")}
             className="grid size-10 shrink-0 place-items-center rounded-full bg-ink text-lime disabled:opacity-30"
@@ -309,7 +324,7 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
         onClick={() => (auto ? (stopAuto.current = true) : void runAuto())}
         aria-pressed={auto}
       >
-        {auto ? <><Square size={14} aria-hidden fill="currentColor" /> {t("talk.stop")}</> : <><Play size={14} aria-hidden /> {t("talk.auto")}</>}
+        {auto ? <><Square size={14} aria-hidden fill="currentColor" /> {t("talk.stop")}</> : <><Play size={14} aria-hidden /> {t("talk.auto")}{est && <span className="tnum text-[11px] font-normal text-mute">{usd(est.five)}</span>}</>}
       </Button>}
     </div>
   );
@@ -391,7 +406,7 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
                         const id = r.kind === "msg" ? r.m.persona_id : r.id;
                         const p = byId.get(id);
                         if (!p) return null;
-                        return <ReplyCard key={r.kind === "msg" ? `${id}-${r.m.at}` : `t-${id}`} p={p} text={r.kind === "msg" ? r.m.content : undefined} wide={mode === "conversation"} />;
+                        return <ReplyCard key={r.kind === "msg" ? `${id}-${r.m.at}` : `t-${id}`} p={p} text={r.kind === "msg" ? r.m.content : undefined} basis={r.kind === "msg" ? r.m.basis : undefined} because={r.kind === "msg" ? r.m.because : undefined} wide={mode === "conversation"} />;
                       })}
                     </div>
                   ),

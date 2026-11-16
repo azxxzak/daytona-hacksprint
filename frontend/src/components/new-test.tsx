@@ -1,15 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, FileUp, Film, Image as ImageIcon, Loader2, Play, Upload, X } from "lucide-react";
+import { ArrowLeft, FileUp, Plus, Film, Image as ImageIcon, Loader2, Play, Upload, X } from "lucide-react";
 import { api, uploadTest } from "@/lib/api";
 import { errorText } from "@/lib/errors";
-import type { Persona } from "@/lib/types";
+import { useApi } from "@/lib/hooks";
+import type { LibraryGroup, Persona } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
+import { LibraryGroupSection } from "./library-groups";
 import { PersonaCard } from "./persona-card";
-import { Button, Card, ErrorNote, SectionHeader, cx, useDocTitle } from "./ui";
+import { useToast } from "./toast";
+import { Button, Card, Dialog, ErrorNote, SectionHeader, cx, useDocTitle } from "./ui";
 
 const AGE_MIN = 15;
 const AGE_MAX = 80;
@@ -39,11 +42,12 @@ function DualSlider({ min, max, value, onChange, labelMin, labelMax }: {
   );
 }
 
-function usePreview(ageMin: number, ageMax: number, genders: string, count: number, csv: File | null) {
+function usePreview(ageMin: number, ageMax: number, genders: string, count: number, csv: File | null, enabled: boolean) {
   const key = `${ageMin}-${ageMax}-${genders}-${count}-${csv ? `${csv.name}:${csv.size}:${csv.lastModified}` : ""}`;
   const [res, setRes] = useState<{ key: string; personas: Persona[] | null; error: unknown }>({ key: "", personas: null, error: null });
   const [last, setLast] = useState<Persona[] | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const ac = new AbortController();
     const id = setTimeout(() => {
       const q = new URLSearchParams({ age_min: String(ageMin), age_max: String(ageMax), genders, count: String(count) });
@@ -65,8 +69,9 @@ function usePreview(ageMin: number, ageMax: number, genders: string, count: numb
     }, 400);
     return () => { clearTimeout(id); ac.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- key covers csv identity
-  }, [ageMin, ageMax, genders, count, key]);
+  }, [ageMin, ageMax, genders, count, key, enabled]);
   // keep showing the previous panel (dimmed) while the next one loads
+  if (!enabled) return { personas: null as Persona[] | null, loading: false, error: null as unknown };
   return { personas: res.key === key ? res.personas ?? last : last, loading: res.key !== key, error: res.key === key ? res.error : null };
 }
 
@@ -77,6 +82,18 @@ function formatBytes(n: number) {
 export function NewTest() {
   const { t } = useI18n();
   const router = useRouter();
+  const toast = useToast();
+  const params = useSearchParams();
+  const initialLib = (params.get("library") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const [source, setSource] = useState<"sample" | "library" | "csv">(initialLib.length ? "library" : "sample");
+  const [libIds, setLibIds] = useState<string[]>(initialLib);
+  const [picker, setPicker] = useState(false);
+  const lib = useApi<{ groups: LibraryGroup[] }>(source === "library" ? "/api/library" : null);
+  const libById = useMemo(() => {
+    const m = new Map<string, Persona>();
+    lib.data?.groups.forEach((g) => g.personas.forEach((p) => m.set(p.id, p)));
+    return m;
+  }, [lib.data]);
   const [age, setAge] = useState<[number, number]>([20, 45]);
   const [genders, setGenders] = useState<{ F: boolean; M: boolean }>({ F: true, M: true });
   const [count, setCount] = useState(20);
@@ -97,7 +114,7 @@ export function NewTest() {
   const hintId = useId();
 
   const gendersParam = [genders.F && "F", genders.M && "M"].filter(Boolean).join(",");
-  const { personas, loading: previewLoading, error: previewError } = usePreview(age[0], age[1], gendersParam, count, csv);
+  const { personas, loading: previewLoading, error: previewError } = usePreview(age[0], age[1], gendersParam, count, source === "csv" ? csv : null, source === "sample" || (source === "csv" && !!csv));
 
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
@@ -118,19 +135,24 @@ export function NewTest() {
     });
 
   const uploading = pct !== null;
+  const audienceOk = source === "sample" || (source === "csv" && !!csv) || (source === "library" && libIds.length >= 5 && libIds.length <= 60);
   const start = async () => {
-    if (!file || uploading) return;
+    if (!file || uploading || !audienceOk) return;
     setSubmitError(null);
     setPct(0);
     const form = new FormData();
     form.append("media", file);
-    form.append("age_min", String(age[0]));
-    form.append("age_max", String(age[1]));
-    form.append("genders", gendersParam);
-    form.append("count", String(count));
+    if (source === "library") {
+      form.append("library_persona_ids", libIds.join(","));
+    } else {
+      form.append("age_min", String(age[0]));
+      form.append("age_max", String(age[1]));
+      form.append("genders", gendersParam);
+      form.append("count", String(count));
+    }
     if (name.trim()) form.append("name", name.trim());
     if (context.trim()) form.append("context", context.trim());
-    if (csv) form.append("people_csv", csv);
+    if (source === "csv" && csv) form.append("people_csv", csv);
     const up = uploadTest(form, setPct);
     abortRef.current = up.abort;
     try {
@@ -153,20 +175,60 @@ export function NewTest() {
           as="h1"
           label={t("new.audienceLabel")}
           title={t("new.audienceTitle")}
-          action={
-            <>
-              <input
-                ref={csvInput} type="file" accept=".csv,text/csv" className="sr-only" tabIndex={-1} aria-hidden
-                onChange={(e) => { setCsv(e.target.files?.[0] ?? null); e.target.value = ""; }}
-              />
-              <Button variant="outline" size="sm" onClick={() => csvInput.current?.click()}>
-                <FileUp size={14} aria-hidden /> {csv ? t("new.csvReplace") : t("new.csv")}
-              </Button>
-            </>
-          }
         />
 
-        <Card className="mt-6 grid grid-cols-1 gap-8 p-6 sm:p-8 md:grid-cols-[1.4fr_1fr_1fr]">
+        <div role="radiogroup" aria-label={t("new.src")} className="mt-6 inline-flex flex-wrap gap-1 rounded-full bg-surface p-1">
+          {([["sample", "new.srcSample"], ["library", "new.srcLibrary"], ["csv", "new.srcCsv"]] as const).map(([k, label]) => (
+            <button
+              key={k} type="button" role="radio" aria-checked={source === k} onClick={() => setSource(k)}
+              className={cx("h-9 rounded-full px-4 text-[13px] font-medium transition-colors", source === k ? "bg-ink text-white" : "text-mute hover:text-ink")}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
+
+        {source === "library" && (
+          <div className="mt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="tnum text-sm text-mute" aria-live="polite">{libIds.length < 5 ? t("new.libEmpty") : t("lib.count", { n: libIds.length })}</p>
+              <Button variant="outline" size="sm" onClick={() => setPicker(true)}><Plus size={14} aria-hidden /> {t("new.libAdd")}</Button>
+            </div>
+            {lib.error && <div className="mt-3"><ErrorNote>{t("lib.loadError")}</ErrorNote></div>}
+            <ul className="mt-4 grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+              {libIds.map((id) => {
+                const p = libById.get(id);
+                return (
+                  <li key={id} className="relative">
+                    {p ? <PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} /> : <div className="pulse aspect-[4/5] rounded-card bg-surface" />}
+                    <button
+                      type="button" aria-label={t("new.libRemove", { name: p?.name ?? id })}
+                      onClick={() => setLibIds((x) => x.filter((i) => i !== id))}
+                      className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-ink/80 text-white hover:bg-ink"
+                    >
+                      <X size={14} aria-hidden />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {source === "csv" && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <input
+              ref={csvInput} type="file" accept=".csv,text/csv" className="sr-only" tabIndex={-1} aria-hidden
+              onChange={(e) => { setCsv(e.target.files?.[0] ?? null); e.target.value = ""; }}
+            />
+            <Button variant="outline" size="sm" onClick={() => csvInput.current?.click()}>
+              <FileUp size={14} aria-hidden /> {csv ? t("new.csvReplace") : t("new.csvPick")}
+            </Button>
+            {!csv && <span className="text-sm text-mute">{t("new.csvPickHint")}</span>}
+          </div>
+        )}
+
+        {source !== "library" && <Card className="mt-6 grid grid-cols-1 gap-8 p-6 sm:p-8 md:grid-cols-[1.4fr_1fr_1fr]">
           <div>
             <div className="flex items-baseline justify-between">
               <span className="text-sm font-medium">{t("new.age")}</span>
@@ -201,9 +263,9 @@ export function NewTest() {
               <input id="count" type="range" className="range" min={5} max={60} value={count} onChange={(e) => setCount(Number(e.target.value))} />
             </div>
           </div>
-        </Card>
+        </Card>}
 
-        {csv && (
+        {source === "csv" && csv && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-mute">
             <span className="inline-flex items-center gap-2 rounded-full bg-surface py-1 pl-3 pr-1 text-ink">
               <FileUp size={14} aria-hidden /> <span className="max-w-[220px] truncate">{csv.name}</span>
@@ -215,7 +277,7 @@ export function NewTest() {
           </div>
         )}
 
-        <div className="mt-8">
+        {(source === "sample" || (source === "csv" && !!csv)) && <div className="mt-8">
           <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">
             {t("new.previewLabel")}
             {previewLoading && (
@@ -233,7 +295,7 @@ export function NewTest() {
               <li key={i}><div className="pulse aspect-[4/5] rounded-card bg-surface" /></li>
             ))}
           </ul>
-        </div>
+        </div>}
       </div>
 
       <div>
@@ -298,6 +360,23 @@ export function NewTest() {
         {!file && !fileError && <p className="mt-1 text-sm text-mute">{t("new.needFile")}</p>}
       </div>
 
+      <Dialog open={picker} onClose={() => setPicker(false)} label={t("new.libPickerTitle")} side xl>
+        <h2 className="pr-10 text-xl font-bold">{t("new.libPickerTitle")}</h2>
+        <div className="mt-6 space-y-10">
+          {lib.loading && <p className="pulse text-sm text-mute">{t("common.loading")}</p>}
+          {lib.data?.groups.map((g) => (
+            <LibraryGroupSection
+              key={g.id} group={g} headingAs="h3" selecting picked={new Set(libIds)}
+              onToggle={(p) => setLibIds((x) => (x.includes(p.id) ? x.filter((i) => i !== p.id) : x.length >= 60 ? (toast.error(t("lib.maxPick")), x) : [...x, p.id]))}
+            />
+          ))}
+        </div>
+        <div className="sticky bottom-0 -mx-6 mt-6 flex items-center justify-between bg-surface px-6 py-3 sm:-mx-8 sm:px-8">
+          <span className="tnum text-sm text-mute">{t("vw.selectedCount", { n: libIds.length })}</span>
+          <Button onClick={() => setPicker(false)}>{t("new.libDone")}</Button>
+        </div>
+      </Dialog>
+
       <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center px-4">
         {uploading ? (
           <div className="pointer-events-auto flex h-12 items-center gap-3 rounded-full bg-ink py-1 pl-5 pr-1 text-white" role="status">
@@ -310,7 +389,7 @@ export function NewTest() {
             </button>
           </div>
         ) : (
-          <Button size="lg" className="pointer-events-auto pl-5" disabled={!file} onClick={start}>
+          <Button size="lg" className="pointer-events-auto pl-5" disabled={!file || !audienceOk} onClick={start}>
             <Play size={16} aria-hidden /> {t("new.start")}
           </Button>
         )}

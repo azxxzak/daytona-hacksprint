@@ -159,6 +159,7 @@ export function Dialog({
   label,
   side,
   wide,
+  xl,
   children,
 }: {
   open: boolean;
@@ -166,6 +167,7 @@ export function Dialog({
   label: string;
   side?: boolean;
   wide?: boolean;
+  xl?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -197,7 +199,7 @@ export function Dialog({
       }}
       className={cx(
         "max-h-none bg-transparent p-0 text-ink",
-        side ? "m-0 ml-auto h-dvh w-full max-w-[460px]" : cx("m-auto max-w-none", wide ? "w-[min(94vw,760px)]" : "w-[min(92vw,420px)]"),
+        side ? cx("m-0 ml-auto h-dvh w-full", xl ? "max-w-[860px]" : "max-w-[480px]") : cx("m-auto max-w-none", wide ? "w-[min(94vw,760px)]" : "w-[min(92vw,420px)]"),
       )}
     >
       {open && (

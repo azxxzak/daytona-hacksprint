@@ -9,11 +9,12 @@ import type { Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
 import { cx, useDocTitle } from "../ui";
 import { Player, type PlayerHandle } from "./player";
+import { DecisionReportTab } from "./decision-report";
 import { Results } from "./results";
 import { TestName } from "./test-name";
 import { Viewers } from "./viewers";
 
-const TABS = ["results", "viewers"] as const;
+const TABS = ["results", "viewers", "decision"] as const;
 type Tab = (typeof TABS)[number];
 
 export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void }) {
@@ -39,7 +40,7 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
     ? [t("rep.verdict", { engaged: s.engaged, total: s.total }), s.low_t != null && test.media_kind === "video" ? t("rep.verdictDip", { t: fmtTime(s.low_t) }) : ""].filter(Boolean).join(lang === "ja" ? "" : " ")
     : "";
 
-  const tabLabel = { results: "rep.tabResults", viewers: "rep.tabViewers" } as const;
+  const tabLabel = { results: "rep.tabResults", viewers: "rep.tabViewers", decision: "rep.tabDecision" } as const;
   const onKey = (e: React.KeyboardEvent, i: number) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     const n = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
@@ -83,6 +84,7 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="pt-6">
           {tab === "results" && <Results test={test} onSeek={(sec) => player.current?.seek(sec)} />}
           {tab === "viewers" && <Viewers test={test} />}
+          {tab === "decision" && <DecisionReportTab test={test} />}
         </div>
       </div>
     </div>

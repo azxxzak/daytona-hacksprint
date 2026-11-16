@@ -19,9 +19,11 @@ export function usePersonaMeta() {
 export function PersonaCard({
   persona,
   title,
+  meta: metaOverride,
   badge,
   onDetails,
   onTalk,
+  actionLabel,
   selecting,
   selected,
   onToggle,
@@ -29,16 +31,19 @@ export function PersonaCard({
 }: {
   persona: Persona;
   title?: string;
+  meta?: string;
   badge?: ReactNode;
   onDetails?: () => void;
   onTalk?: () => void;
+  actionLabel?: string;
   selecting?: boolean;
   selected?: boolean;
   onToggle?: () => void;
   eager?: boolean;
 }) {
   const { t } = useI18n();
-  const meta = usePersonaMeta()(persona);
+  const computedMeta = usePersonaMeta()(persona);
+  const meta = metaOverride ?? computedMeta;
   const interactive = !selecting && !!(onDetails || onTalk);
 
   return (
@@ -88,15 +93,15 @@ export function PersonaCard({
               </Button>
             )}
             {onTalk && (
-              <Button variant="dark" size="sm" onClick={onTalk} aria-label={`${t("vw.talk")}: ${persona.name}`}>
-                <MessageCircle size={14} aria-hidden /> {t("vw.talk")}
+              <Button variant="dark" size="sm" onClick={onTalk} aria-label={`${actionLabel ?? t("vw.talk")}: ${persona.name}`}>
+                <MessageCircle size={14} aria-hidden /> {actionLabel ?? t("vw.talk")}
               </Button>
             )}
           </div>
         )}
       </div>
       <p className="mt-2 truncate text-[11px] text-mute">{meta}</p>
-      <p className="truncate text-sm font-bold">{title ?? persona.name}</p>
+      <p className="line-clamp-2 text-sm font-bold leading-snug">{title ?? persona.name}</p>
     </div>
   );
 }

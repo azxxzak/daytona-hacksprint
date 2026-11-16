@@ -1,7 +1,12 @@
+import { Suspense } from "react";
 import { NewTest } from "@/components/new-test";
 
 export const metadata = { title: "New test" };
 
 export default function Page() {
-  return <NewTest />;
+  return (
+    <Suspense>
+      <NewTest />
+    </Suspense>
+  );
 }

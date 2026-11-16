@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, LogOut, User } from "lucide-react";
 import { api } from "@/lib/api";
@@ -42,6 +42,7 @@ function AccountMenu({ me }: { me: Me }) {
   const { t } = useI18n();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const usage = useApi<{ month_usd: number }>(open ? "/api/usage" : null);
   const wrap = useRef<HTMLDivElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
 
@@ -92,6 +93,9 @@ function AccountMenu({ me }: { me: Me }) {
           <p className="truncate px-3 py-2 text-sm text-mute" title={me.email}>
             {me.email}
           </p>
+          {usage.data && (
+            <p className="tnum px-3 pb-2 text-sm">{t("nav.usage", { v: "$" + usage.data.month_usd.toFixed(2) })}</p>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -110,14 +114,32 @@ function AccountMenu({ me }: { me: Me }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { data: me } = useApi<Me>("/api/auth/me");
+  const path = usePathname();
 
   return (
     <MeContext.Provider value={me}>
       <header className="sticky top-0 z-30 border-b border-line bg-surface">
         <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between px-4 sm:px-8">
-          <Link href="/" className="text-[17px] font-bold tracking-tight">
-            {t("app.name")}
-          </Link>
+          <div className="flex items-center gap-5 sm:gap-8">
+            <Link href="/" className="text-[17px] font-bold tracking-tight">
+              {t("app.name")}
+            </Link>
+            <nav aria-label={t("nav.main")} className="flex items-center gap-1">
+              {[
+                { href: "/", label: t("nav.tests"), on: path === "/" || path.startsWith("/tests") },
+                { href: "/library", label: t("nav.library"), on: path.startsWith("/library") },
+              ].map((n) => (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  aria-current={n.on ? "page" : undefined}
+                  className={cx("rounded-full px-3 py-1 text-sm font-medium transition-colors", n.on ? "bg-ink text-white" : "text-mute hover:text-ink")}
+                >
+                  {n.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
           <div className="flex items-center gap-2">
             <LangSwitch />
             {me && <AccountMenu me={me} />}

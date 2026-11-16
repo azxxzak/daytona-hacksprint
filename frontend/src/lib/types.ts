@@ -1,3 +1,48 @@
+export type Profile = {
+  full_name: string;
+  meta: string;
+  headline: string;
+  household: string;
+  income: string;
+  region: string;
+  daily_life: string;
+  media: string[];
+  ad_attitude: string;
+  purchase_drivers: string[];
+  purchase_barriers: string[];
+  values_top: string[];
+  values_low: string[];
+  big_five: { openness: number; conscientiousness: number; extraversion: number; agreeableness: number; neuroticism: number };
+  speech_style: string;
+  insights: { title: string; body: string }[];
+};
+
+export type Basis = "profile" | "inferred" | "invented";
+
+export type LibraryGroup = { id: string; name: string; name_en: string; description: string; personas: Persona[] };
+
+export type Theme = {
+  id: string;
+  title: string;
+  description: string;
+  share: number;
+  by_segment: { segment: string; share: number }[];
+  examples: { persona_id: string; t: number; text: string }[];
+};
+
+export type DecisionReport = {
+  decision_question: string;
+  thesis: string;
+  headline_cards: { label: string; value: string; note: string }[];
+  insights: { title: string; evidence: string; so_what: string; now_what: string; score: number }[];
+  segments: { segment: string; verdict: "win" | "grow" | "deprioritize"; why: string }[];
+  tensions: { tension: string; strategy: string }[];
+  actions: { horizon: "48h" | "2w" | "6w"; action: string; kpi: string }[];
+  numbers: { key: string; label: string; value: string }[];
+  generated_at: string;
+  lang: "ja" | "en";
+};
+
 export type Persona = {
   id: string;
   name: string;
@@ -11,6 +56,8 @@ export type Persona = {
   values: string;
   color: string;
   avatar_url: string;
+  profile?: Profile;
+  has_deep_profile?: boolean;
 };
 
 export type Gaze = {
@@ -22,6 +69,8 @@ export type Gaze = {
   interest: 1 | 2 | 3 | 4 | 5;
   thought: string;
   thought_en: string;
+  basis?: Basis;
+  because?: string;
 };
 
 export type Status = "queued" | "running" | "done" | "failed";
@@ -63,6 +112,7 @@ export type Test = TestSummary & {
   personas: Persona[];
   gaze: Gaze[];
   summary: Summary | null;
+  themes?: Theme[] | null;
 };
 
 export type Message = { role: "user" | "assistant"; content: string };
@@ -70,7 +120,7 @@ export type Message = { role: "user" | "assistant"; content: string };
 export type TalkMode = "qa" | "conversation";
 export type TalkMessage =
   | { role: "user"; content: string; at: string }
-  | { role: "persona"; persona_id: string; content: string; at: string };
+  | { role: "persona"; persona_id: string; content: string; at: string; basis?: Basis; because?: string };
 export type TalkSummary = {
   id: string;
   test_id: string;

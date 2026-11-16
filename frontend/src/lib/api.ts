@@ -92,7 +92,7 @@ export function uploadTest(
 export type AskEvent =
   | { event: "user"; data: { content: string; at: string } }
   | { event: "thinking"; data: { persona_id: string } }
-  | { event: "message"; data: { persona_id: string; content: string; at: string } }
+  | { event: "message"; data: { persona_id: string; content: string; at: string; basis?: "profile" | "inferred" | "invented"; because?: string } }
   | { event: "suggestion"; data: { content: string | null } }
   | { event: "done"; data: Record<string, never> }
   | { event: "error"; data: { detail?: string } };
