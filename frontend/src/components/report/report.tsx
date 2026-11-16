@@ -2,54 +2,44 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { ArrowLeft } from "lucide-react";
-import { fmtTime, mean } from "@/lib/format";
-import type { Persona, Test } from "@/lib/types";
+import { fmtTime } from "@/lib/format";
+import type { Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
-import { cx } from "../ui";
-import { Interview } from "./interview";
+import { cx, useDocTitle } from "../ui";
 import { Player, type PlayerHandle } from "./player";
 import { Results } from "./results";
+import { TestName } from "./test-name";
 import { Viewers } from "./viewers";
 
-const TABS = ["results", "viewers", "interview"] as const;
+const TABS = ["results", "viewers"] as const;
 type Tab = (typeof TABS)[number];
 
-export function Report({ test }: { test: Test }) {
+export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void }) {
   const { t, lang } = useI18n();
   const router = useRouter();
   const params = useSearchParams();
   const player = useRef<PlayerHandle>(null);
   const s = test.summary;
+  useDocTitle(test.name);
 
   const tabParam = params.get("tab");
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? "") ? (tabParam as Tab) : "results";
-  const pid = params.get("p");
 
-  const go = useCallback((next: Tab, personaId?: string) => {
+  const go = useCallback((next: Tab) => {
     const q = new URLSearchParams(params.toString());
     if (next === "results") q.delete("tab"); else q.set("tab", next);
-    if (personaId) q.set("p", personaId); else if (next !== "interview") q.delete("p");
     const qs = q.toString();
     router.replace(qs ? `?${qs}` : "?", { scroll: false });
   }, [params, router]);
 
-  const interviewee: Persona | undefined = useMemo(() => {
-    const byId = test.personas.find((p) => p.id === pid);
-    if (byId) return byId;
-    // default: the viewer who stayed most interested
-    const avg = new Map<string, number[]>();
-    for (const g of test.gaze) (avg.get(g.id) ?? avg.set(g.id, []).get(g.id)!).push(g.interest);
-    return [...test.personas].sort((a, b) => (mean(avg.get(b.id) ?? []) ?? 0) - (mean(avg.get(a.id) ?? []) ?? 0))[0];
-  }, [test.personas, test.gaze, pid]);
-
   const date = new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-GB", { dateStyle: "long" }).format(new Date(test.created_at));
   const verdict = s
-    ? [t("rep.verdict", { engaged: s.engaged, total: s.total }), s.low_t != null && test.media_kind === "video" ? t("rep.verdictDip", { t: fmtTime(s.low_t) }) : ""].filter(Boolean).join(" ")
+    ? [t("rep.verdict", { engaged: s.engaged, total: s.total }), s.low_t != null && test.media_kind === "video" ? t("rep.verdictDip", { t: fmtTime(s.low_t) }) : ""].filter(Boolean).join(lang === "ja" ? "" : " ")
     : "";
 
-  const tabLabel = { results: "rep.tabResults", viewers: "rep.tabViewers", interview: "rep.tabInterview" } as const;
+  const tabLabel = { results: "rep.tabResults", viewers: "rep.tabViewers" } as const;
   const onKey = (e: React.KeyboardEvent, i: number) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     const n = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
@@ -64,7 +54,7 @@ export function Report({ test }: { test: Test }) {
           <ArrowLeft size={15} aria-hidden /> {t("common.back")}
         </Link>
         <p className="tnum text-xs text-mute">{date} · {t("rep.viewersCount", { n: test.viewers })}</p>
-        <h1 className="mt-1 truncate text-base font-bold" title={test.name}>{test.name}</h1>
+        <TestName test={test} onRenamed={onRenamed} />
         {s && (
           <>
             <p className="mt-2 max-w-4xl text-balance text-[28px] font-bold leading-snug tracking-tight sm:text-4xl">{verdict}</p>
@@ -92,8 +82,7 @@ export function Report({ test }: { test: Test }) {
         </div>
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="pt-6">
           {tab === "results" && <Results test={test} onSeek={(sec) => player.current?.seek(sec)} />}
-          {tab === "viewers" && <Viewers test={test} onInterview={(p) => go("interview", p.id)} />}
-          {tab === "interview" && interviewee && <Interview key={interviewee.id} test={test} persona={interviewee} onSelect={(p) => go("interview", p.id)} />}
+          {tab === "viewers" && <Viewers test={test} />}
         </div>
       </div>
     </div>

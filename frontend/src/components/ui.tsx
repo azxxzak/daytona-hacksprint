@@ -158,12 +158,14 @@ export function Dialog({
   onClose,
   label,
   side,
+  wide,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   label: string;
   side?: boolean;
+  wide?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -195,7 +197,7 @@ export function Dialog({
       }}
       className={cx(
         "max-h-none bg-transparent p-0 text-ink",
-        side ? "m-0 ml-auto h-dvh w-full max-w-[460px]" : "m-auto w-[min(92vw,420px)] max-w-none",
+        side ? "m-0 ml-auto h-dvh w-full max-w-[460px]" : cx("m-auto max-w-none", wide ? "w-[min(94vw,760px)]" : "w-[min(92vw,420px)]"),
       )}
     >
       {open && (
@@ -227,4 +229,14 @@ export function ErrorNote({ children, action }: { children: ReactNode; action?: 
       {action}
     </div>
   );
+}
+
+export function useDocTitle(title: string | undefined) {
+  useEffect(() => {
+    if (title) document.title = `${title} · AdLens`;
+  }, [title]);
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div aria-hidden className={cx("pulse rounded-card bg-[#e4e4e8]", className)} />;
 }

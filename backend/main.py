@@ -453,4 +453,4 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
         yield sse("done", {})
 
     return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})

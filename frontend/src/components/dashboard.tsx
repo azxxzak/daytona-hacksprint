@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Film, Image as ImageIcon, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Film, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { usePolled, isActive } from "@/lib/hooks";
 import type { Test, TestSummary } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { ProgressBar } from "./progress-bar";
-import { Button, Dialog, ErrorNote, SectionHeader, buttonClass, cx } from "./ui";
+import { useToast } from "./toast";
+import { Button, Dialog, ErrorNote, SectionHeader, Skeleton, buttonClass, cx, useDocTitle } from "./ui";
 
 type Progress = Test["progress"];
 
@@ -30,7 +31,40 @@ function StatusChip({ status }: { status: TestSummary["status"] }) {
   );
 }
 
-function TestCard({ test, onDelete }: { test: TestSummary & { progress?: Progress }; onDelete: () => void }) {
+function CardMenu({ name, onRename, onDelete }: { name: string; onRename: () => void; onDelete: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); btn.current?.focus(); } };
+    document.addEventListener("mousedown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
+  }, [open]);
+  const item = "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-canvas";
+  return (
+    <div ref={wrap} className="absolute right-3 top-3 z-10">
+      <button
+        ref={btn} type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`${t("common.more")}: ${name}`}
+        onClick={() => setOpen((o) => !o)}
+        className={cx("grid size-8 place-items-center rounded-full bg-surface/90 text-mute transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100", open ? "opacity-100" : "opacity-0")}
+      >
+        <MoreHorizontal size={16} aria-hidden />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-10 w-40 rounded-card border border-line bg-surface p-1.5">
+          <button type="button" role="menuitem" autoFocus className={item} onClick={() => { setOpen(false); onRename(); }}><Pencil size={14} aria-hidden /> {t("common.rename")}</button>
+          <button type="button" role="menuitem" className={cx(item, "text-danger")} onClick={() => { setOpen(false); onDelete(); }}><Trash2 size={14} aria-hidden /> {t("common.delete")}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TestCard({ test, onDelete, onRename }: { test: TestSummary & { progress?: Progress }; onDelete: () => void; onRename: () => void }) {
   const { t, lang } = useI18n();
   const date = new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-GB", { dateStyle: "medium" }).format(new Date(test.created_at));
   const active = isActive(test);
@@ -81,14 +115,7 @@ function TestCard({ test, onDelete }: { test: TestSummary & { progress?: Progres
           )}
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label={t("dash.deleteAria", { name: test.name })}
-        className="absolute right-3 top-3 z-10 grid size-8 place-items-center rounded-full bg-surface/90 text-mute opacity-0 transition-opacity hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-      >
-        <Trash2 size={15} aria-hidden />
-      </button>
+      <CardMenu name={test.name} onRename={onRename} onDelete={onDelete} />
     </article>
   );
 }
@@ -103,7 +130,34 @@ export function Dashboard() {
   const [pendingDelete, setPendingDelete] = useState<TestSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const tests = data?.tests ?? [];
+  const toast = useToast();
+  useDocTitle(t("dash.title"));
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "running" | "done" | "failed">("all");
+  const [renaming, setRenaming] = useState<TestSummary | null>(null);
+  const [newName, setNewName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const all = data?.tests ?? [];
+  const tests = all.filter((x) => {
+    const okStatus = filter === "all" || (filter === "running" ? isActive(x) : x.status === filter);
+    return okStatus && x.name.toLowerCase().includes(query.trim().toLowerCase());
+  });
+
+  const saveRename = async () => {
+    const name = newName.trim();
+    if (!renaming || !name) return;
+    setRenameBusy(true);
+    try {
+      await api(`/api/tests/${renaming.id}`, { method: "PATCH", json: { name } });
+      toast.success(t("toast.renamed"));
+      setRenaming(null);
+      reload();
+    } catch (e) {
+      toast.error(errorText(e, t));
+    } finally {
+      setRenameBusy(false);
+    }
+  };
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -112,6 +166,7 @@ export function Dashboard() {
     try {
       await api(`/api/tests/${pendingDelete.id}`, { method: "DELETE" });
       setPendingDelete(null);
+      toast.success(t("toast.deleted"));
       reload();
     } catch (e) {
       setDeleteError(e instanceof ApiError ? errorText(e, t) : t("err.generic"));
@@ -124,6 +179,29 @@ export function Dashboard() {
     <>
       <SectionHeader as="h1" label={t("dash.label")} title={t("dash.title")} />
 
+      {all.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-72">
+            <Search size={15} aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+            <label htmlFor="test-search" className="sr-only">{t("dash.search")}</label>
+            <input
+              id="test-search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("dash.search")}
+              className="h-10 w-full rounded-full border border-line bg-surface pl-10 pr-4 text-sm"
+            />
+          </div>
+          <div role="group" aria-label={t("dash.filter")} className="flex flex-wrap gap-1.5">
+            {(["all", "running", "done", "failed"] as const).map((f) => (
+              <button
+                key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}
+                className={cx("h-9 rounded-full border px-4 text-[13px] font-medium transition-colors", filter === f ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:text-ink")}
+              >
+                {t(({ all: "dash.fAll", running: "dash.fRunning", done: "dash.fDone", failed: "dash.fFailed" } as const)[f])}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-6">
         {error && !data && (
           <ErrorNote action={<Button variant="outline" size="sm" onClick={reload}>{t("common.retry")}</Button>}>
@@ -134,12 +212,12 @@ export function Dashboard() {
         {loading && !data && !error && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy="true">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="pulse h-[268px] rounded-card bg-surface" />
+              <Skeleton key={i} className="h-[268px] bg-surface" />
             ))}
           </div>
         )}
 
-        {data && tests.length === 0 && (
+        {data && all.length === 0 && (
           <div className="mx-auto mt-10 max-w-md rounded-[18px] bg-surface px-8 py-14 text-center">
             <div className="mx-auto grid size-12 place-items-center rounded-full bg-ink text-lime">
               <Plus size={22} aria-hidden />
@@ -149,11 +227,13 @@ export function Dashboard() {
           </div>
         )}
 
+        {all.length > 0 && tests.length === 0 && <p className="py-10 text-center text-sm text-mute">{t("dash.noMatch")}</p>}
+
         {tests.length > 0 && (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {tests.map((x) => (
               <li key={x.id}>
-                <TestCard test={x} onDelete={() => setPendingDelete(x)} />
+                <TestCard test={x} onDelete={() => setPendingDelete(x)} onRename={() => { setNewName(x.name); setRenaming(x); }} />
               </li>
             ))}
           </ul>
@@ -165,6 +245,21 @@ export function Dashboard() {
           <Plus size={18} aria-hidden /> {t("dash.new")}
         </Link>
       </div>
+
+      <Dialog open={!!renaming} onClose={() => !renameBusy && setRenaming(null)} label={t("rename.title")}>
+        <form onSubmit={(e) => { e.preventDefault(); void saveRename(); }}>
+          <h2 className="pr-8 text-lg font-bold">{t("rename.title")}</h2>
+          <label htmlFor="rename-input" className="mt-4 block text-sm font-medium">{t("rename.label")}</label>
+          <input
+            id="rename-input" value={newName} maxLength={120} autoFocus onChange={(e) => setNewName(e.target.value)}
+            className="mt-1.5 h-11 w-full rounded-xl border border-line bg-canvas px-3.5 text-[15px] focus:bg-white"
+          />
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setRenaming(null)} disabled={renameBusy}>{t("common.cancel")}</Button>
+            <Button type="submit" disabled={renameBusy || !newName.trim()}>{t("common.save")}</Button>
+          </div>
+        </form>
+      </Dialog>
 
       <Dialog open={!!pendingDelete} onClose={() => !deleting && setPendingDelete(null)} label={t("dash.deleteTitle")}>
         <h2 className="pr-8 text-lg font-bold">{t("dash.deleteTitle")}</h2>

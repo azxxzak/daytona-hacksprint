@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Info, MessageCircle } from "lucide-react";
+import { Check, Info, MessageCircle } from "lucide-react";
 import type { Persona } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { Avatar, Button, cx } from "./ui";
@@ -21,19 +21,25 @@ export function PersonaCard({
   title,
   badge,
   onDetails,
-  onInterview,
+  onTalk,
+  selecting,
+  selected,
+  onToggle,
   eager,
 }: {
   persona: Persona;
   title?: string;
   badge?: ReactNode;
   onDetails?: () => void;
-  onInterview?: () => void;
+  onTalk?: () => void;
+  selecting?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
   eager?: boolean;
 }) {
   const { t } = useI18n();
   const meta = usePersonaMeta()(persona);
-  const interactive = !!(onDetails || onInterview);
+  const interactive = !selecting && !!(onDetails || onTalk);
 
   return (
     <div className="group min-w-0">
@@ -46,7 +52,26 @@ export function PersonaCard({
           className={cx("aspect-[4/5] w-full", interactive && "transition duration-300 group-hover:scale-[1.03] group-hover:blur-[3px] group-hover:brightness-75 group-focus-within:blur-[3px] group-focus-within:brightness-75 motion-reduce:transition-none")}
         />
         {badge && <div className="absolute bottom-2 left-2">{badge}</div>}
-        {onDetails && (
+        {selecting && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-pressed={!!selected}
+            aria-label={t("vw.selectToggle", { name: persona.name })}
+            className={cx("absolute inset-0 rounded-card", selected && "ring-2 ring-inset ring-ink")}
+          >
+            <span
+              aria-hidden
+              className={cx(
+                "absolute right-2.5 top-2.5 grid size-7 place-items-center rounded-full border-2 transition-colors",
+                selected ? "border-ink bg-lime text-ink" : "border-white bg-black/10 text-transparent",
+              )}
+            >
+              <Check size={15} strokeWidth={3} />
+            </span>
+          </button>
+        )}
+        {!selecting && onDetails && (
           <button
             type="button"
             onClick={onDetails}
@@ -62,9 +87,9 @@ export function PersonaCard({
                 <Info size={14} aria-hidden /> {t("vw.details")}
               </Button>
             )}
-            {onInterview && (
-              <Button variant="dark" size="sm" onClick={onInterview} aria-label={`${t("vw.interview")}: ${persona.name}`}>
-                <MessageCircle size={14} aria-hidden /> {t("vw.interview")}
+            {onTalk && (
+              <Button variant="dark" size="sm" onClick={onTalk} aria-label={`${t("vw.talk")}: ${persona.name}`}>
+                <MessageCircle size={14} aria-hidden /> {t("vw.talk")}
               </Button>
             )}
           </div>

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP } from "next/font/google";
 import { cookies } from "next/headers";
 import { I18nProvider } from "@/components/i18n-provider";
+import { ToastProvider } from "@/components/toast";
 import { LANG_COOKIE, isLang } from "@/lib/i18n";
 import "./globals.css";
 
@@ -25,7 +26,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={lang} className={noto.variable}>
       <body>
-        <I18nProvider initial={lang}>{children}</I18nProvider>
+        <I18nProvider initial={lang}>
+          <ToastProvider>{children}</ToastProvider>
+        </I18nProvider>
       </body>
     </html>
   );

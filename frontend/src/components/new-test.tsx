@@ -9,7 +9,7 @@ import { errorText } from "@/lib/errors";
 import type { Persona } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { PersonaCard } from "./persona-card";
-import { Button, Card, ErrorNote, SectionHeader, cx } from "./ui";
+import { Button, Card, ErrorNote, SectionHeader, cx, useDocTitle } from "./ui";
 
 const AGE_MIN = 15;
 const AGE_MAX = 80;
@@ -39,15 +39,24 @@ function DualSlider({ min, max, value, onChange, labelMin, labelMax }: {
   );
 }
 
-function usePreview(ageMin: number, ageMax: number, genders: string, count: number) {
-  const key = `${ageMin}-${ageMax}-${genders}-${count}`;
+function usePreview(ageMin: number, ageMax: number, genders: string, count: number, csv: File | null) {
+  const key = `${ageMin}-${ageMax}-${genders}-${count}-${csv ? `${csv.name}:${csv.size}:${csv.lastModified}` : ""}`;
   const [res, setRes] = useState<{ key: string; personas: Persona[] | null; error: unknown }>({ key: "", personas: null, error: null });
   const [last, setLast] = useState<Persona[] | null>(null);
   useEffect(() => {
     const ac = new AbortController();
     const id = setTimeout(() => {
       const q = new URLSearchParams({ age_min: String(ageMin), age_max: String(ageMax), genders, count: String(count) });
-      api<{ personas: Persona[] }>(`/api/audience/preview?${q}`, { signal: ac.signal })
+      let req;
+      if (csv) {
+        const form = new FormData();
+        form.append("age_min", String(ageMin)); form.append("age_max", String(ageMax));
+        form.append("genders", genders); form.append("count", String(count)); form.append("people_csv", csv);
+        req = api<{ personas: Persona[] }>("/api/audience/preview", { method: "POST", form, signal: ac.signal });
+      } else {
+        req = api<{ personas: Persona[] }>(`/api/audience/preview?${q}`, { signal: ac.signal });
+      }
+      req
         .then((d) => { setLast(d.personas); setRes({ key, personas: d.personas, error: null }); })
         .catch((e) => {
           if (e instanceof DOMException && e.name === "AbortError") return;
@@ -55,6 +64,7 @@ function usePreview(ageMin: number, ageMax: number, genders: string, count: numb
         });
     }, 400);
     return () => { clearTimeout(id); ac.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key covers csv identity
   }, [ageMin, ageMax, genders, count, key]);
   // keep showing the previous panel (dimmed) while the next one loads
   return { personas: res.key === key ? res.personas ?? last : last, loading: res.key !== key, error: res.key === key ? res.error : null };
@@ -74,6 +84,9 @@ export function NewTest() {
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [context, setContext] = useState("");
+  const [name, setName] = useState("");
+  const nameId = useId();
+  useDocTitle(t("dash.new"));
   const [dragging, setDragging] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -84,7 +97,7 @@ export function NewTest() {
   const hintId = useId();
 
   const gendersParam = [genders.F && "F", genders.M && "M"].filter(Boolean).join(",");
-  const { personas, loading: previewLoading, error: previewError } = usePreview(age[0], age[1], gendersParam, count);
+  const { personas, loading: previewLoading, error: previewError } = usePreview(age[0], age[1], gendersParam, count, csv);
 
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
@@ -115,6 +128,7 @@ export function NewTest() {
     form.append("age_max", String(age[1]));
     form.append("genders", gendersParam);
     form.append("count", String(count));
+    if (name.trim()) form.append("name", name.trim());
     if (context.trim()) form.append("context", context.trim());
     if (csv) form.append("people_csv", csv);
     const up = uploadTest(form, setPct);
@@ -264,10 +278,15 @@ export function NewTest() {
             )}
           </div>
           <div>
+            <label htmlFor={nameId} className="text-sm font-medium">{t("new.name")}</label>
+            <input
+              id={nameId} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder={t("new.namePlaceholder")}
+              className="mb-5 mt-2 h-11 w-full rounded-card border border-line bg-surface px-4 text-sm placeholder:text-mute/70"
+            />
             <label htmlFor={ctxId} className="text-sm font-medium">{t("new.context")}</label>
             <p className="mt-0.5 text-xs text-mute">{t("new.contextHint")}</p>
             <textarea
-              id={ctxId} rows={6} value={context} maxLength={1000} onChange={(e) => setContext(e.target.value)}
+              id={ctxId} rows={5} value={context} maxLength={1000} onChange={(e) => setContext(e.target.value)}
               placeholder={t("new.contextPlaceholder")}
               className="mt-2 w-full resize-y rounded-card border border-line bg-surface p-4 text-sm placeholder:text-mute/70"
             />

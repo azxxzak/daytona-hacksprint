@@ -66,3 +66,19 @@ export type Test = TestSummary & {
 };
 
 export type Message = { role: "user" | "assistant"; content: string };
+
+export type TalkMode = "qa" | "conversation";
+export type TalkMessage =
+  | { role: "user"; content: string; at: string }
+  | { role: "persona"; persona_id: string; content: string; at: string };
+export type TalkSummary = {
+  id: string;
+  test_id: string;
+  mode: TalkMode;
+  persona_ids: string[];
+  title: string;
+  created_at: string;
+  updated_at: string;
+  suggestion: string | null;
+};
+export type Talk = TalkSummary & { messages: TalkMessage[] };

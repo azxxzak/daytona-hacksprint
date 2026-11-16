@@ -6,7 +6,7 @@ import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { LangSwitch } from "@/components/app-shell";
 import { useI18n } from "@/components/i18n-provider";
-import { Button, Spinner } from "@/components/ui";
+import { Button, Spinner, useDocTitle } from "@/components/ui";
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const errId = useId();
+  useDocTitle(t("login.title"));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
