@@ -83,5 +83,10 @@ def with_colors(df):
 
 
 def describe(p: dict) -> str:
-    skip = {"color"}
-    return "; ".join(f"{k}: {v}" for k, v in p.items() if k not in skip and pd.notna(v))
+    skip = {"color", "profile", "_seed", "avatar_url", "has_deep_profile"}
+    base = "; ".join(f"{k}: {v}" for k, v in p.items()
+                     if k not in skip and not isinstance(v, (dict, list)) and pd.notna(v))
+    if p.get("profile"):
+        from core.persona_profile import compact
+        base += f"; profile: {compact(p)}"
+    return base

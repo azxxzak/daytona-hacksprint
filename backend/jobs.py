@@ -9,8 +9,11 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.db import Test, session, test_dir
+from core import llm
 from core.gaze import persona_gaze
+from core.persona_profile import ensure_profiles
 from core.sandbox import analyze
+from core.themes import summarize as summarize_themes
 
 log = logging.getLogger("adlens.jobs")
 pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="adlens-job")
@@ -44,9 +47,13 @@ def summarize(gaze: list[dict]) -> dict | None:
             "curve": [{"t": t, "avg": round(a, 2)} for t, a in pts]}
 
 
-def run_test(test_id: str, filename: str, personas: list[dict], context: str):
+def run_test(test_id: str, filename: str, personas: list[dict], context: str, owner: str = "system"):
+    llm.current_user.set(owner)  # every model call in this run is billed to the test owner
     d = test_dir(test_id)
     try:
+        # profiles are written while the sandbox works on the media
+        profiles = ThreadPoolExecutor(max_workers=1).submit(llm.bind(
+            lambda: ensure_profiles(personas, log=lambda m: log.info("%s: %s", test_id, m))))
         _progress(test_id, status="running", step="sandbox", percent=5, message="Starting a Daytona sandbox")
         media = (d / "upload.bin").read_bytes()
 
@@ -87,12 +94,21 @@ def run_test(test_id: str, filename: str, personas: list[dict], context: str):
                 log.warning("%s: %s", test_id, msg)
             done["n"] += 1
 
+        try:
+            profiles.result(timeout=600)
+        except Exception as e:  # noqa: BLE001 - viewers still work from their short attributes
+            log.warning("%s: profiles unavailable: %s", test_id, e)
         gaze = persona_gaze(analysis["keyframes"], personas, context, gaze_log, analysis.get("transcript"))
-        _progress(test_id, step="saving", percent=95, message="Saving the report")
-
+        _progress(test_id, step="saving", percent=90, message="Grouping reactions into themes")
         summary = summarize(gaze)
+        try:
+            themes = summarize_themes(gaze, personas, "ja")
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s: themes failed: %s", test_id, e)
+            themes = None
+        _progress(test_id, percent=97, message="Saving the report")
         (d / "result.json").write_text(json.dumps(
-            {"analysis": analysis, "gaze": gaze, "personas": personas, "summary": summary},
+            {"analysis": analysis, "gaze": gaze, "personas": personas, "summary": summary, "themes": themes},
             ensure_ascii=False))
         (d / "upload.bin").unlink(missing_ok=True)
         _progress(test_id, status="done", step="done", percent=100, message="",
@@ -103,5 +119,5 @@ def run_test(test_id: str, filename: str, personas: list[dict], context: str):
         _progress(test_id, status="failed", error=f"The test could not finish: {str(e)[:300]}")
 
 
-def submit(test_id: str, filename: str, personas: list[dict], context: str):
-    pool.submit(run_test, test_id, filename, personas, context)
+def submit(test_id: str, filename: str, personas: list[dict], context: str, owner: str = "system"):
+    pool.submit(run_test, test_id, filename, personas, context, owner)

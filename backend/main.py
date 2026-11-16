@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from sqlmodel import select  # noqa: E402
 from backend import auth, db, jobs  # noqa: E402
 from backend.db import Test, User  # noqa: E402
 from core import avatars  # noqa: E402
+from core import library, llm, persona_profile, themes as themes_mod  # noqa: E402
 from core import talk as talk_mod  # noqa: E402
 from core.gaze import chat_with_persona  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
@@ -49,6 +51,9 @@ def persona_out(p: dict) -> dict:
     g = str(p.get("gender", "")).strip().lower()
     out["gender"] = "Female" if g in ("f", "female", "女性", "女") else "Male" if g in ("m", "male", "男性", "男") else p.get("gender", "")
     out["avatar_url"] = f"/api/avatars/{k}.jpg"
+    if p.get("profile"):
+        out["profile"] = p["profile"]
+        out["has_deep_profile"] = persona_profile.deep_status(p) == "ready"
     return out
 
 
@@ -139,12 +144,21 @@ def avatar(key: str, user: User = auth.CurrentUser):
 async def create_test(media: UploadFile = File(...), age_min: int = Form(20), age_max: int = Form(45),
                       genders: str = Form("F,M"), count: int = Form(20), context: str = Form(""),
                       name: str = Form(""), people_csv: UploadFile | None = File(None),
-                      user: User = auth.CurrentUser):
+                      library_persona_ids: str = Form(""), user: User = auth.CurrentUser):
     ext = Path(media.filename or "").suffix.lower()
     if ext not in MEDIA_TYPES:
         raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG or JPG file.")
-    csv_bytes = await people_csv.read() if people_csv else None
-    personas = build_panel(age_min, age_max, genders, count, csv_bytes)
+    if library_persona_ids.strip():
+        lib = library.all_personas()
+        ids = list(dict.fromkeys(i.strip() for i in library_persona_ids.split(",") if i.strip()))
+        if not (1 <= len(ids) <= 60) or any(i not in lib for i in ids):
+            raise HTTPException(400, "Pick between 1 and 60 personas from the library.")
+        personas = []
+        for n, i in enumerate(ids):  # test-local ids keep the rest of the pipeline unchanged
+            personas.append({**lib[i], "library_id": i, "id": f"P{n + 1:03d}"})
+    else:
+        csv_bytes = await people_csv.read() if people_csv else None
+        personas = build_panel(age_min, age_max, genders, count, csv_bytes)
 
     test_id = uuid.uuid4().hex[:12]
     d = db.test_dir(test_id)
@@ -166,7 +180,7 @@ async def create_test(media: UploadFile = File(...), age_min: int = Form(20), ag
                    context=context[:500],
                    media_kind=kind, mime=mime, viewers=len(personas), message="Waiting to start"))
         s.commit()
-    jobs.submit(test_id, media.filename, personas, context)
+    jobs.submit(test_id, media.filename, personas, context, owner=user.email)
     return {"id": test_id}
 
 
@@ -192,7 +206,8 @@ def get_test(test_id: str, user: User = auth.CurrentUser):
         out.update(duration=a.get("duration", 0), width=a.get("width", 0), height=a.get("height", 0),
                    grid=a.get("grid", [48, 27]), frames=[{"t": x["t"], "heat": x["heat"]} for x in a["frames"]],
                    transcript=a.get("transcript", []), personas=[persona_out(p) for p in r["personas"]],
-                   gaze=[{**g, "thought_en": g.get("thought_en", "")} for g in r["gaze"]], summary=r["summary"])
+                   gaze=[{**g, "thought_en": g.get("thought_en", "")} for g in r["gaze"]], summary=r["summary"],
+                   themes=r.get("themes"))
     return out
 
 
@@ -405,11 +420,15 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
     def sse(event, data):
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+    owner = user.email
+
     def answer(p, said):
+        llm.current_user.set(owner)
         gz = [g for g in r["gaze"] if g["id"] == p["id"]]
         return talk_mod.reply(p, members, gz, transcript, kf, thread, question, said, talk["mode"])
 
     def stream():
+        llm.current_user.set(owner)
         user_msg = {"role": "user", "content": question, "at": _iso()}
         talk["messages"].append(user_msg)
         talk["title"] = talk["title"] or question[:80]
@@ -417,11 +436,12 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
         _save_talk(t, talk)
         yield sse("user", {"content": question, "at": user_msg["at"]})
 
-        def store(p, text):
-            m = {"role": "persona", "persona_id": p["id"], "content": text, "at": _iso()}
+        def store(p, rep):
+            m = {"role": "persona", "persona_id": p["id"], "content": rep["content"], "at": _iso(),
+                 "basis": rep.get("basis"), "because": rep.get("because", ""), "usd": rep.get("usd", 0)}
             talk["messages"].append(m)
             _save_talk(t, talk)
-            return sse("message", {k: m[k] for k in ("persona_id", "content", "at")})
+            return sse("message", {k: m[k] for k in ("persona_id", "content", "at", "basis", "because")})
 
         if talk["mode"] == "qa" or len(members) == 1:
             for p in members:
@@ -439,9 +459,9 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
             for p in members:
                 yield sse("thinking", {"persona_id": p["id"]})
                 try:
-                    text = answer(p, list(said))
-                    said.append((p, text))
-                    yield store(p, text)
+                    rep = answer(p, list(said))
+                    said.append((p, rep["content"]))
+                    yield store(p, rep)
                 except Exception as e:  # noqa: BLE001
                     yield sse("error", {"persona_id": p["id"], "detail": f"{p['name']} could not answer: {str(e)[:100]}"})
         try:
@@ -454,3 +474,119 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
+# ---------------- v3: library, deep profiles, themes, cost ----------------
+@app.get("/api/library")
+def get_library(user: User = auth.CurrentUser):
+    ps = library.all_personas()
+    groups = []
+    for gid, name, name_en, desc, _ in library.GROUPS:
+        members = [persona_out(p) for p in ps.values() if p["group"] == gid]
+        groups.append({"id": gid, "name": name, "name_en": name_en, "description": desc, "personas": members})
+    return {"groups": groups}
+
+
+@app.get("/api/library/personas/{pid}")
+def get_library_persona(pid: str, user: User = auth.CurrentUser):
+    p = library.all_personas().get(pid)
+    if not p:
+        raise HTTPException(404, "Persona not found.")
+    return persona_out(p)
+
+
+def _global_persona(pid: str, user: User) -> dict:
+    """lib_* -> library persona; '<test_id>:<persona_id>' -> a viewer of one of the user's tests."""
+    if pid.startswith("lib_"):
+        p = library.all_personas().get(pid)
+    elif ":" in pid:
+        test_id, local = pid.split(":", 1)
+        r = _result(own_test(test_id, user))
+        p = next((x for x in r["personas"] if x["id"] == local), None)
+    else:
+        p = None
+    if not p:
+        raise HTTPException(404, "Persona not found.")
+    if not p.get("profile"):
+        llm.current_user.set(user.email)
+        persona_profile.ensure_profiles([p])
+    return p
+
+
+@app.get("/api/personas/{pid}/deep")
+def get_deep(pid: str, user: User = auth.CurrentUser):
+    p = _global_persona(pid, user)
+    status = persona_profile.deep_status(p)
+    md = persona_profile.deep_path(p).read_text() if status == "ready" else None
+    return {"status": status, "markdown": md}
+
+
+@app.post("/api/personas/{pid}/deep", status_code=202)
+def make_deep(pid: str, user: User = auth.CurrentUser):
+    p = _global_persona(pid, user)
+    if persona_profile.deep_status(p) == "none":
+        email = user.email
+
+        def run():
+            llm.current_user.set(email)
+            try:
+                persona_profile.generate_deep(p)
+            except Exception as e:  # noqa: BLE001
+                logging.getLogger("adlens").warning("deep profile %s failed: %s", pid, e)
+        threading.Thread(target=run, daemon=True).start()
+    return {"status": "generating" if persona_profile.deep_status(p) != "ready" else "ready"}
+
+
+@app.post("/api/tests/{test_id}/themes", status_code=202)
+def recompute_themes(test_id: str, lang: str = "ja", user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    r = _result(t)
+    f = db.test_dir(t.id) / "result.json"
+    email = user.email
+
+    def run():
+        llm.current_user.set(email)
+        try:
+            r["themes"] = themes_mod.summarize(r["gaze"], r["personas"], "en" if lang == "en" else "ja")
+            f.write_text(json.dumps(r, ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("adlens").warning("themes %s failed: %s", test_id, e)
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "generating"}
+
+
+class EstimateIn(BaseModel):
+    rounds: int = 1
+
+
+# list-price upper bound for one viewer reply (image + profile + thread in, short JSON answer + thinking out)
+_REPLY_TOKENS = (6000, 1500)
+
+
+@app.post("/api/tests/{test_id}/talks/{talk_id}/estimate")
+def estimate_talk(test_id: str, talk_id: str, body: EstimateIn, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    talk = json.loads(_talk_file(t, talk_id).read_text())
+    rounds = max(1, min(body.rounds, 20))
+    paid = [m["usd"] for m in talk["messages"] if m.get("role") == "persona" and m.get("usd")]
+    pin, pout = llm.PRICES[llm.CHAT_MODEL]
+    bound = (_REPLY_TOKENS[0] * pin + _REPLY_TOKENS[1] * pout) / 1e6
+    per_reply, basis = (sum(paid[-12:]) / len(paid[-12:]), "measured") if paid else (bound, "price_list")
+    sp, sout = llm.PRICES[llm.FAST_MODEL]
+    per_round = per_reply * len(talk["persona_ids"]) + (2000 * sp + 600 * sout) / 1e6  # + follow-up suggestion
+    return {"usd": round(per_round * rounds, 4), "per_round_usd": round(per_round, 4), "basis": basis}
+
+
+@app.get("/api/usage")
+def usage(user: User = auth.CurrentUser):
+    u = llm.month_usage(user.email)
+    with db.session() as s:
+        n_tests = len(s.exec(select(Test).where(Test.owner == user.email)).all())
+    return {"month_usd": u["month_usd"], "tests": n_tests, "talk_messages": u["calls"]["talk"]}
+
+
+try:  # decision report + exports (separate module)
+    from backend.report_routes import router as report_router  # noqa: E402
+    app.include_router(report_router)
+except ImportError as e:  # pragma: no cover
+    logging.getLogger("adlens").warning("decision report routes not loaded: %s", e)

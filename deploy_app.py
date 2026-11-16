@@ -44,11 +44,14 @@ def bundle() -> bytes:
                     tar.add(f, arcname=f.relative_to(ROOT).as_posix())
         for f in (ROOT / "cache" / "avatars").glob("*"):  # already drawn portraits
             tar.add(f, arcname=f.relative_to(ROOT).as_posix())
+        for f in (ROOT / "data" / "profiles").glob("*"):  # persona profiles (library + panels), not user data
+            if f.suffix in (".json", ".md"):
+                tar.add(f, arcname=f.relative_to(ROOT).as_posix())
     return buf.getvalue()
 
 
-def find_existing():
-    return next(iter(daytona.list(ListSandboxesQuery(labels={"app": NAME}))), None)
+def find_all():
+    return list(daytona.list(ListSandboxesQuery(labels={"app": NAME})))
 
 
 def run(sb, cmd, timeout=900):
@@ -59,16 +62,21 @@ def run(sb, cmd, timeout=900):
 
 
 def deploy():
+    try:
+        _deploy()
+    except BaseException:
+        print("deploy failed; the previous sandbox (if any) was left running")
+        raise
+
+
+def _deploy():
     admin, admin_pw = env("ADLENS_ADMIN_EMAIL"), env("ADLENS_ADMIN_PASSWORD")
     if not admin or len(admin_pw) < 10:
         raise SystemExit("Set ADLENS_ADMIN_EMAIL and ADLENS_ADMIN_PASSWORD (10+ chars) in .env first.")
     keys = {k: env(k) for k in ("ANTHROPIC_API_KEY", "DAYTONA_API_KEY", "OPENAI_API_KEY") if env(k)}
     keys.update(SECRET_KEY=secrets.token_urlsafe(48), COOKIE_SECURE="1", ADLENS_DATA=f"{APP}/data")
 
-    old = find_existing()
-    if old:
-        print("removing previous sandbox", old.id)
-        daytona.delete(old)
+    old = find_all()  # torn down only after the new one is serving
     print("creating sandbox…")
     sb = daytona.create(CreateSandboxFromSnapshotParams(language="python", env_vars=keys,
                                                         labels={"app": NAME}, auto_stop_interval=0))
@@ -79,7 +87,9 @@ def deploy():
     print("installing python deps…")
     run(sb, f"cd {APP} && pip install -q -r requirements.txt")
     print("building frontend…")
-    run(sb, f"cd {APP}/frontend && npm ci --no-audit --no-fund && npm run build", timeout=1200)
+    run(sb, f"cd {APP}/frontend && npm ci --no-audit --no-fund && "
+            f"SKIP_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=768 npm run build",
+        timeout=1200)
 
     # first account: password passed through the environment of a one-off command, never written to disk
     r = sb.process.exec(f"cd {APP} && python -m backend.manage create-user '{admin}' 'Admin' \"$ADLENS_ADMIN_PASSWORD\" "
@@ -98,13 +108,20 @@ def deploy():
         time.sleep(2)
     else:
         raise SystemExit("the web app did not come up")
+    for o in old:
+        print("removing previous sandbox", o.id)
+        daytona.delete(o)
     url = sb.create_signed_preview_url(WEB_PORT, expires_in_seconds=URL_TTL)
     print(f"\n✅ AdLens is live (link valid {URL_TTL // 3600}h):\n{url.url}")
 
 
 def delete():
-    sb = find_existing()
-    print(f"deleted {sb.id}" if sb and not daytona.delete(sb) else "nothing to delete")
+    sbs = find_all()
+    for sb in sbs:
+        daytona.delete(sb)
+        print("deleted", sb.id)
+    if not sbs:
+        print("nothing to delete")
 
 
 if __name__ == "__main__":

@@ -1,26 +1,24 @@
 """Ask a vision model where each persona would look in each keyframe, and what they think."""
 import json
-import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-import anthropic
-
+from core import llm
+from core.llm import CHAT_MODEL, FAST_MODEL, client  # noqa: F401  (re-exported for other modules)
 from core.personas import describe
 
-FAST_MODEL = os.getenv("FAST_MODEL", "claude-haiku-5-5")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 CHUNK = 15  # personas per request
 
-_client = None
+REALISM = """Realism rules (important):
+- People may be indifferent, bored, skeptical, confused or say no. Most ads get partial attention at best.
+- Never turn a non-user into an eager buyer. If the product doesn't fit their life or budget, show that.
+- React through their own profile (job, money, family, media habits, ad attitude), not as a marketer would.
+- Plain everyday words, no polished marketing phrases."""
 
-
-def client():
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
-
+EVIDENCE = """Also say what each reaction rests on:
+- "basis": "profile" if it follows a stated fact in their profile, "inferred" if it is a reasonable guess from it,
+  "invented" if nothing in the profile supports it.
+- "because": at most 60 characters (Japanese) naming that fact or reason."""
 
 PROMPT = """You simulate a consumer research panel watching an advertisement.
 This is the frame at t={t:.1f}s{context}.
@@ -28,21 +26,25 @@ This is the frame at t={t:.1f}s{context}.
 For EACH persona below, predict realistically where their eyes land first in this frame,
 how interested they are, and a short inner thought IN JAPANESE (as that person would think it),
 plus a natural English translation of that thought.
-Be honest and varied: many people ignore ads, get bored, or dislike them. Do not be uniformly positive.
 Different people notice different things (price, faces, product, text, logo, background).
 If speech is given, react to the actual words too (a catchphrase, a claim, a price, an awkward line).
+
+{realism}
+
+{evidence}
 
 Personas:
 {personas}
 
 Return ONLY a JSON array, one object per persona, in this exact shape:
 [{{"id": "P001", "x": 0.0-1.0, "y": 0.0-1.0, "looking_at": "short English label",
-   "interest": 1-5, "thought": "日本語の短い心の声", "thought_en": "the same thought in English"}}]
+   "interest": 1-5, "thought": "日本語の短い心の声", "thought_en": "the same thought in English",
+   "basis": "profile|inferred|invented", "because": "根拠"}}]
 x,y are normalized image coordinates (0,0 = top-left)."""
 
 
 def _text(msg):
-    return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    return llm.text_of(msg)
 
 
 def _parse(text):
@@ -60,24 +62,25 @@ def transcript_text(transcript):
 
 def _ask(keyframe, personas, context, speech=""):
     lines = "\n".join(f"- {describe(p)}" for p in personas)
-    msg = client().messages.create(
-        model=FAST_MODEL,
-        max_tokens=4000,
+    text, _ = llm.call(
+        model=FAST_MODEL, max_tokens=8000, cache=True, tag="test-gaze",
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                          "data": keyframe["jpg_b64"]}},
             {"type": "text", "text": PROMPT.format(
-                t=keyframe["t"], context=context, personas=lines,
+                t=keyframe["t"], context=context, personas=lines, realism=REALISM, evidence=EVIDENCE,
                 speech=f'Audio heard around this moment: "{speech}"\n' if speech else "")},
         ]}],
     )
     out = []
-    for g in _parse(_text(msg)):
+    for g in _parse(text):
         try:
             out.append({"id": str(g["id"]), "t": keyframe["t"],
                         "x": min(max(float(g["x"]), 0), 1), "y": min(max(float(g["y"]), 0), 1),
                         "looking_at": g.get("looking_at", ""), "interest": int(g.get("interest", 3)),
-                        "thought": g.get("thought", ""), "thought_en": g.get("thought_en", "")})
+                        "thought": g.get("thought", ""), "thought_en": g.get("thought_en", ""),
+                        "basis": g.get("basis") if g.get("basis") in ("profile", "inferred", "invented") else None,
+                        "because": str(g.get("because") or "")[:120]})
         except (KeyError, ValueError, TypeError):
             continue
     return out
@@ -93,8 +96,8 @@ def persona_gaze(keyframes, personas, ad_context="", log=print, transcript=None)
             for kf in keyframes for i in range(0, len(personas), CHUNK)]
     log(f"Asking {FAST_MODEL}: {len(jobs)} requests ({len(keyframes)} keyframes × {len(personas)} personas)")
     results = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for chunk in pool.map(lambda j: _safe(j, context, log), jobs):
+    with ThreadPoolExecutor(max_workers=12) as pool:  # the shared limiter decides real concurrency
+        for chunk in pool.map(llm.bind(lambda j: _safe(j, context, log)), jobs):
             results.extend(chunk)
     return results
 
@@ -108,6 +111,7 @@ def _safe(job, context, log):
 
 
 def chat_with_persona(persona, gaze_points, history, user_msg, keyframe=None, transcript=None):
+    """Legacy one-to-one interview (v1 endpoints)."""
     seen = "\n".join(f"- t={g['t']:.1f}s looked at {g['looking_at']} (interest {g['interest']}/5): {g['thought']}"
                      for g in gaze_points)
     system = (f"You are this person, being interviewed after watching an ad in a consumer focus group.\n"
@@ -115,12 +119,13 @@ def chat_with_persona(persona, gaze_points, history, user_msg, keyframe=None, tr
               f"What you noticed while watching:\n{seen or '(nothing recorded)'}\n"
               f"Everything said in the ad (transcript with timestamps):\n{transcript_text(transcript) or '(no speech)'}\n"
               "If asked about specific words or lines, quote them and give your honest reaction.\n"
-              "Stay in character. Be candid, including criticism. Keep answers short (2-4 sentences). "
+              f"{REALISM}\n"
+              "Stay in character. Keep answers short (2-4 sentences). "
               "Reply in the same language the interviewer uses (Japanese or English).")
     content = [{"type": "text", "text": user_msg}]
     if keyframe and not history:
         content.insert(0, {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                        "data": keyframe["jpg_b64"]}})
-    msgs = history + [{"role": "user", "content": content}]
-    msg = client().messages.create(model=CHAT_MODEL, max_tokens=600, system=system, messages=msgs)
-    return _text(msg)
+    text, _ = llm.call(model=CHAT_MODEL, max_tokens=4000, system=system, tag="talk-legacy",
+                       messages=history + [{"role": "user", "content": content}])
+    return text

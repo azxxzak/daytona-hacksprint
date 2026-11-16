@@ -132,3 +132,85 @@ Default question chips (client side): JA `この案の第一印象は？` `具�
 - The old `/interviews/{persona_id}` endpoints keep working but the UI should use talks.
 
 Errors are `{"detail": "human readable message"}` with a fitting status code (400 validation, 401, 403, 404, 413 too large, 429, 500).
+
+## v3 additions — richer personas, library, evidence, themes, decision report, cost
+
+### Persona profile (two tiers)
+`Persona` gains optional fields (present on library personas and on tests created after v3):
+```ts
+type Profile = {                       // tier 1, generated automatically for every persona (~1.5k chars)
+  full_name: string;                   // "佐藤 蓮" (Japanese name, reading in parentheses ok)
+  meta: string;                        // "10代/男性/高校生/未婚" (age band/gender/job/marital, in Japanese)
+  headline: string;                    // one-line identity, e.g. "承認を求めるデジタルネイティブ"
+  household: string; income: string; region: string;
+  daily_life: string;                  // 2-3 sentences
+  media: string[];                     // channels with how they use them
+  ad_attitude: string;                 // how they treat ads, 1-2 sentences
+  purchase_drivers: string[]; purchase_barriers: string[];
+  values_top: string[]; values_low: string[];          // Schwartz-style, 3 each
+  big_five: { openness: number; conscientiousness: number; extraversion: number; agreeableness: number; neuroticism: number }; // 0-100
+  speech_style: string;                // how they talk, with 2-3 typical phrases
+  insights: { title: string; body: string }[];          // 2 short insights
+};
+type Persona = { /* v1 fields */ profile?: Profile; has_deep_profile?: boolean };
+```
+Tier 2 ("deep profile") is long markdown (insights, contradictions, communication analysis — like the AI For Growth Talk persona report). It is generated only on request:
+| Method & path | Response |
+|---|---|
+| `GET /api/personas/{pid}/deep` | `{ markdown: string \| null, status: "none" \| "generating" \| "ready" }` |
+| `POST /api/personas/{pid}/deep` | `202 { status: "generating" }` (poll GET every 3 s; takes ~40-90 s) |
+`pid` here is a **global persona id** (`"lib_..."` for library personas, `"{test_id}:{P001}"` for test personas).
+
+### Persona library
+```ts
+type LibraryGroup = { id: string; name: string; name_en: string; description: string; personas: Persona[] };
+```
+| Method & path | Response |
+|---|---|
+| `GET /api/library` | `{ groups: LibraryGroup[] }` — e.g. 性年代 (14), ライフスタイル (12), メディア（ヘビー層） (12) |
+| `GET /api/library/personas/{pid}` | `Persona` (with profile) |
+`POST /api/tests` accepts `library_persona_ids` (comma-separated) instead of the age/gender/count sampling. When present, those personas are the panel (5–60).
+
+### Evidence labels
+`Gaze` and talk persona messages gain:
+```ts
+basis: "profile" | "inferred" | "invented";   // profile = follows a stated fact of the persona; inferred = reasonable guess from it; invented = no support
+because: string;                               // ≤ 80 chars, which fact or reason
+```
+UI shows a small label (e.g. "根拠: プロフィール" / "推測" / "創作") and the `because` text on hover. Older data has no `basis` — show nothing.
+
+### Themes (open-answer summary)
+`Test.themes`:
+```ts
+type Theme = { id: string; title: string; description: string; share: number;     // share of all thoughts, 0..1
+               by_segment: { segment: string; share: number }[];                 // "<25","25-34","35-44","45+","Female","Male"
+               examples: { persona_id: string; t: number; text: string }[] };     // up to 3
+```
+`Test.themes: Theme[] | null` (null while not computed; computed at the end of the run; `POST /api/tests/{id}/themes` recomputes, 202).
+
+### Decision report + exports
+| Method & path | Response |
+|---|---|
+| `POST /api/tests/{id}/report` | `202 { status: "generating" }` — body `{ decision_question?: string, lang: "ja" \| "en" }` |
+| `GET /api/tests/{id}/report` | `{ status: "none" \| "generating" \| "ready" \| "failed", report: DecisionReport \| null, error?: string }` |
+| `GET /api/tests/{id}/report.pptx` | editable PowerPoint (charts are native PPT charts) |
+| `GET /api/tests/{id}/report.pdf` | PDF of the same deck (may be 501 if no converter is available — then hide the button) |
+```ts
+type DecisionReport = {
+  decision_question: string;
+  thesis: string;                                         // one line
+  headline_cards: { label: string; value: string; note: string }[];   // exactly 4: primary segment, key tension, primary driver, biggest friction
+  insights: { title: string; evidence: string; so_what: string; now_what: string; score: number }[];  // 3-5, picked from 10 candidates
+  segments: { segment: string; verdict: "win" | "grow" | "deprioritize"; why: string }[];
+  tensions: { tension: string; strategy: string }[];      // up to 3
+  actions: { horizon: "48h" | "2w" | "6w"; action: string; kpi: string }[];   // 3 per horizon
+  numbers: { key: string; label: string; value: string }[];   // every number shown in the report comes from here (computed by code)
+  generated_at: string; lang: "ja" | "en";
+};
+```
+
+### Cost
+| Method & path | Response |
+|---|---|
+| `POST /api/tests/{id}/talks/{talk_id}/estimate` | body `{ rounds: number }` → `{ usd: number, basis: "measured" \| "price_list", per_round_usd: number }` — shown next to Send / Auto |
+| `GET /api/usage` | `{ month_usd: number, tests: number, talk_messages: number }` for the signed-in user |
