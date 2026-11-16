@@ -5,6 +5,8 @@ import logging
 import re
 import shutil
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -12,13 +14,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from sqlmodel import select  # noqa: E402
 
 from backend import auth, db, jobs  # noqa: E402
 from backend.db import Test, User  # noqa: E402
 from core import avatars  # noqa: E402
+from core import talk as talk_mod  # noqa: E402
 from core.gaze import chat_with_persona  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
 
@@ -43,6 +46,8 @@ def persona_out(p: dict) -> dict:
     fields = ("id", "name", "age", "gender", "region", "occupation", "income", "interests", "media", "values", "color")
     out = {f: p.get(f, "") for f in fields}
     out["age"] = int(p.get("age") or 0)
+    g = str(p.get("gender", "")).strip().lower()
+    out["gender"] = "Female" if g in ("f", "female", "女性", "女") else "Male" if g in ("m", "male", "男性", "男") else p.get("gender", "")
     out["avatar_url"] = f"/api/avatars/{k}.jpg"
     return out
 
@@ -133,7 +138,8 @@ def avatar(key: str, user: User = auth.CurrentUser):
 @app.post("/api/tests", status_code=201)
 async def create_test(media: UploadFile = File(...), age_min: int = Form(20), age_max: int = Form(45),
                       genders: str = Form("F,M"), count: int = Form(20), context: str = Form(""),
-                      people_csv: UploadFile | None = File(None), user: User = auth.CurrentUser):
+                      name: str = Form(""), people_csv: UploadFile | None = File(None),
+                      user: User = auth.CurrentUser):
     ext = Path(media.filename or "").suffix.lower()
     if ext not in MEDIA_TYPES:
         raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG or JPG file.")
@@ -156,7 +162,8 @@ async def create_test(media: UploadFile = File(...), age_min: int = Form(20), ag
     for p in personas:
         persona_out(p)  # register portraits
     with db.session() as s:
-        s.add(Test(id=test_id, owner=user.email, name=Path(media.filename).stem[:120], context=context[:500],
+        s.add(Test(id=test_id, owner=user.email, name=(name.strip() or Path(media.filename).stem)[:120],
+                   context=context[:500],
                    media_kind=kind, mime=mime, viewers=len(personas), message="Waiting to start"))
         s.commit()
     jobs.submit(test_id, media.filename, personas, context)
@@ -263,3 +270,187 @@ def ask(test_id: str, pid: str, body: AskIn, user: User = auth.CurrentUser):
     history += [{"role": "user", "content": msg}, {"role": "assistant", "content": reply}]
     f.write_text(json.dumps(history, ensure_ascii=False))
     return {"reply": reply, "messages": history}
+
+
+# ---------------- v2: rename, CSV preview, talks ----------------
+class RenameIn(BaseModel):
+    name: str
+
+
+@app.patch("/api/tests/{test_id}")
+def rename_test(test_id: str, body: RenameIn, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    name = body.name.strip()[:120]
+    if not name:
+        raise HTTPException(400, "Give the test a name.")
+    with db.session() as s:
+        row = s.get(Test, t.id)
+        row.name = name
+        s.add(row)
+        s.commit()
+        s.refresh(row)
+        return summary_out(row)
+
+
+@app.post("/api/audience/preview")
+async def preview_csv(age_min: int = Form(20), age_max: int = Form(45), genders: str = Form("F,M"),
+                      count: int = Form(20), people_csv: UploadFile | None = File(None),
+                      user: User = auth.CurrentUser):
+    csv_bytes = await people_csv.read() if people_csv else None
+    return {"personas": [persona_out(p) for p in build_panel(age_min, age_max, genders, count, csv_bytes)]}
+
+
+class NewTalkIn(BaseModel):
+    persona_ids: list[str]
+    mode: str = "qa"
+
+
+class TalkModeIn(BaseModel):
+    mode: str
+
+
+class TalkAskIn(BaseModel):
+    message: str | None = None
+    use_suggestion: bool = False
+
+
+def _iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _talk_file(t: Test, talk_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{10}", talk_id):
+        raise HTTPException(404, "Talk not found.")
+    f = db.test_dir(t.id) / "talks" / f"{talk_id}.json"
+    if not f.exists():
+        raise HTTPException(404, "Talk not found.")
+    return f
+
+
+def _save_talk(t: Test, talk: dict):
+    d = db.test_dir(t.id) / "talks"
+    d.mkdir(exist_ok=True)
+    talk["updated_at"] = _iso()
+    (d / f"{talk['id']}.json").write_text(json.dumps(talk, ensure_ascii=False))
+
+
+@app.get("/api/tests/{test_id}/talks")
+def list_talks(test_id: str, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    talks = []
+    for f in (db.test_dir(t.id) / "talks").glob("*.json"):
+        talk = json.loads(f.read_text())
+        talk.pop("messages", None)
+        talks.append(talk)
+    return {"talks": sorted(talks, key=lambda x: x["updated_at"], reverse=True)}
+
+
+@app.post("/api/tests/{test_id}/talks", status_code=201)
+def new_talk(test_id: str, body: NewTalkIn, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    r = _result(t)
+    known = {p["id"] for p in r["personas"]}
+    ids = list(dict.fromkeys(body.persona_ids))
+    if not ids or len(ids) > 20 or not set(ids) <= known:
+        raise HTTPException(400, "Pick between 1 and 20 viewers from this test.")
+    if body.mode not in ("qa", "conversation"):
+        raise HTTPException(400, "Mode must be qa or conversation.")
+    now = _iso()
+    talk = {"id": uuid.uuid4().hex[:10], "test_id": t.id, "mode": body.mode, "persona_ids": ids, "title": "",
+            "created_at": now, "updated_at": now, "messages": [], "suggestion": None}
+    _save_talk(t, talk)
+    return talk
+
+
+@app.get("/api/tests/{test_id}/talks/{talk_id}")
+def get_talk(test_id: str, talk_id: str, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    return json.loads(_talk_file(t, talk_id).read_text())
+
+
+@app.patch("/api/tests/{test_id}/talks/{talk_id}")
+def set_talk_mode(test_id: str, talk_id: str, body: TalkModeIn, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    if body.mode not in ("qa", "conversation"):
+        raise HTTPException(400, "Mode must be qa or conversation.")
+    talk = json.loads(_talk_file(t, talk_id).read_text())
+    talk["mode"] = body.mode
+    _save_talk(t, talk)
+    return talk
+
+
+@app.delete("/api/tests/{test_id}/talks/{talk_id}", status_code=204)
+def delete_talk(test_id: str, talk_id: str, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    _talk_file(t, talk_id).unlink()
+
+
+@app.post("/api/tests/{test_id}/talks/{talk_id}/ask")
+def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    talk = json.loads(_talk_file(t, talk_id).read_text())
+    if body.use_suggestion:
+        question = (talk.get("suggestion") or "").strip()
+    else:
+        question = (body.message or "").strip()[:2000]
+    if not question:
+        raise HTTPException(400, "Write a question first." if not body.use_suggestion else "No suggested question yet.")
+    r = _result(t)
+    by_id = {p["id"]: p for p in r["personas"]}
+    members = [by_id[i] for i in talk["persona_ids"] if i in by_id]
+    kf = r["analysis"]["keyframes"][len(r["analysis"]["keyframes"]) // 2] if r["analysis"].get("keyframes") else None
+    transcript = r["analysis"].get("transcript")
+    thread = list(talk["messages"])
+
+    def sse(event, data):
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def answer(p, said):
+        gz = [g for g in r["gaze"] if g["id"] == p["id"]]
+        return talk_mod.reply(p, members, gz, transcript, kf, thread, question, said, talk["mode"])
+
+    def stream():
+        user_msg = {"role": "user", "content": question, "at": _iso()}
+        talk["messages"].append(user_msg)
+        talk["title"] = talk["title"] or question[:80]
+        talk["suggestion"] = None
+        _save_talk(t, talk)
+        yield sse("user", {"content": question, "at": user_msg["at"]})
+
+        def store(p, text):
+            m = {"role": "persona", "persona_id": p["id"], "content": text, "at": _iso()}
+            talk["messages"].append(m)
+            _save_talk(t, talk)
+            return sse("message", {k: m[k] for k in ("persona_id", "content", "at")})
+
+        if talk["mode"] == "qa" or len(members) == 1:
+            for p in members:
+                yield sse("thinking", {"persona_id": p["id"]})
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                futs = {pool.submit(answer, p, []): p for p in members}
+                for fut in as_completed(futs):
+                    p = futs[fut]
+                    try:
+                        yield store(p, fut.result())
+                    except Exception as e:  # noqa: BLE001
+                        yield sse("error", {"persona_id": p["id"], "detail": f"{p['name']} could not answer: {str(e)[:100]}"})
+        else:
+            said = []
+            for p in members:
+                yield sse("thinking", {"persona_id": p["id"]})
+                try:
+                    text = answer(p, list(said))
+                    said.append((p, text))
+                    yield store(p, text)
+                except Exception as e:  # noqa: BLE001
+                    yield sse("error", {"persona_id": p["id"], "detail": f"{p['name']} could not answer: {str(e)[:100]}"})
+        try:
+            talk["suggestion"] = talk_mod.suggest(talk["messages"], members)
+        except Exception:  # noqa: BLE001
+            talk["suggestion"] = None
+        _save_talk(t, talk)
+        yield sse("suggestion", {"content": talk["suggestion"]})
+        yield sse("done", {})
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

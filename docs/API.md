@@ -80,4 +80,55 @@ type Message = { role: "user" | "assistant"; content: string };
 | `POST /api/tests/{id}/interviews/{persona_id}` | `{ message }` | `{ reply, messages: Message[] }` (5–15 s; the persona answers in the language of the question) |
 | `GET /api/avatars/{key}.jpg` | | jpeg portrait |
 
+## v2 additions — talks (replace the old per-viewer interview UI)
+
+A **talk** is a saved conversation between the user and one or more viewers of a finished test.
+
+```ts
+type TalkMode = "qa" | "conversation";     // qa = 一問一答: every viewer answers the question once, independently
+                                           // conversation = 会話: viewers answer one after another and react to each other
+type TalkMessage =
+  | { role: "user"; content: string; at: string }
+  | { role: "persona"; persona_id: string; content: string; at: string };
+type Talk = {
+  id: string; test_id: string; mode: TalkMode;
+  persona_ids: string[];                   // 1 = one-to-one talk
+  title: string;                           // first question, trimmed
+  created_at: string; updated_at: string;
+  messages: TalkMessage[];
+  suggestion: string | null;               // AI-suggested next question, in the language of the last question
+};
+```
+
+| Method & path | Body | Response |
+|---|---|---|
+| `GET /api/tests/{id}/talks` | | `{ talks: Omit<Talk,"messages">[] }` newest first |
+| `POST /api/tests/{id}/talks` | `{ persona_ids: string[] (1..20), mode: TalkMode }` | `201 Talk` (empty messages) |
+| `GET /api/tests/{id}/talks/{talk_id}` | | `Talk` |
+| `DELETE /api/tests/{id}/talks/{talk_id}` | | `204` |
+| `PATCH /api/tests/{id}/talks/{talk_id}` | `{ mode }` | `Talk` (switch mode mid-talk) |
+| `POST /api/tests/{id}/talks/{talk_id}/ask` | `{ message: string }` — or `{ use_suggestion: true }` for auto mode | **`text/event-stream`** (see below) |
+
+The `ask` stream (Server-Sent Events, read it with `fetch` + `ReadableStream`, it is a POST):
+```
+event: user        data: {"content": "...", "at": "..."}                 // the question as stored (useful for use_suggestion)
+event: thinking    data: {"persona_id": "P003"}                          // this viewer is now writing
+event: message     data: {"persona_id": "P003", "content": "...", "at": "..."}
+...                                                                       // qa: viewers in parallel, events arrive as each finishes
+                                                                          // conversation: one viewer at a time, in order
+event: suggestion  data: {"content": "..."}                               // next question to offer (may be null)
+event: done        data: {}
+event: error       data: {"detail": "..."}                               // a single viewer failing does not stop the others
+```
+Auto mode ("オート進行（5問）") is the client calling `ask` with `{use_suggestion: true}` up to 5 times in a row, stoppable between rounds.
+
+Default question chips (client side): JA `この案の第一印象は？` `具体的には？` `話を続けてください。` `どこに惹かれますか？` `懸念は？` `買うきっかけは？`; EN `First impression of this ad?` `What exactly?` `Tell me more.` `What draws you in?` `Any concerns?` `What would make you buy?`
+
+### Other v2 changes
+- `POST /api/tests` accepts an optional `name` form field (defaults to the file name).
+- `PATCH /api/tests/{id}` `{ name }` → `TestSummary` (rename).
+- `POST /api/audience/preview` (multipart: `age_min, age_max, genders, count, people_csv`) returns the exact panel a CSV produces; `GET` stays for the no-CSV case.
+- `Gaze.thought_en` is always present (empty string on older tests).
+- The old `/interviews/{persona_id}` endpoints keep working but the UI should use talks.
+
 Errors are `{"detail": "human readable message"}` with a fitting status code (400 validation, 401, 403, 404, 413 too large, 429, 500).
