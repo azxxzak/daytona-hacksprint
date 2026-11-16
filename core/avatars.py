@@ -10,6 +10,8 @@ from PIL import Image
 
 CACHE = Path(__file__).resolve().parent.parent / "cache" / "avatars"
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2.6-sunburst")
+IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "medium")   # low | medium | high
+PORTRAIT_VERSION = "v2"                                 # bump to redraw every portrait
 
 
 def available() -> bool:
@@ -17,22 +19,24 @@ def available() -> bool:
 
 
 def _prompt(p: dict) -> str:
-    return (f"Photorealistic head-and-shoulders portrait of a fictional {p.get('age')}-year-old Japanese "
+    return (f"Photorealistic documentary-style portrait photo of a fictional {p.get('age')}-year-old Japanese "
             f"{str(p.get('gender', '')).lower()} who works as {p.get('occupation', 'an office worker')} "
-            f"in {p.get('region', 'Japan')}. Interests: {p.get('interests', '')}. "
-            "Natural expression, casual everyday clothing that fits the person, soft natural light, "
-            "plain softly blurred background, looking at the camera. No text, no logos.")
+            f"and lives in {p.get('region', 'Japan')}. Interests: {p.get('interests', '')}. "
+            "Head and shoulders, facing the camera with a natural, relaxed expression. They are in a real setting "
+            "that fits their life (their home, workplace or a place tied to their interests), softly out of focus "
+            "behind them. Everyday clothing that suits their age and job. Natural window light, 50mm lens, "
+            "realistic skin texture, sharp eyes, no retouching look. No text, no logos, no watermark.")
 
 
 def key(p: dict) -> str:
-    return hashlib.sha1((IMAGE_MODEL + _prompt(p)).encode()).hexdigest()[:16]
+    return hashlib.sha1((PORTRAIT_VERSION + IMAGE_MODEL + IMAGE_QUALITY + _prompt(p)).encode()).hexdigest()[:16]
 
 
-def _thumb(png: bytes, size=160) -> bytes:
+def _thumb(png: bytes, size=768) -> bytes:
     im = Image.open(io.BytesIO(png)).convert("RGB")
     im.thumbnail((size, size))
     buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=85)
+    im.save(buf, "JPEG", quality=88, optimize=True, progressive=True)
     return buf.getvalue()
 
 
@@ -46,7 +50,7 @@ def generate_one(p: dict) -> bytes:
     if hit:
         return hit
     from openai import OpenAI
-    r = OpenAI().images.generate(model=IMAGE_MODEL, prompt=_prompt(p), size="1024x1024", quality="low", n=1)
+    r = OpenAI().images.generate(model=IMAGE_MODEL, prompt=_prompt(p), size="1024x1024", quality=IMAGE_QUALITY, n=1)
     jpg = _thumb(base64.b64decode(r.data[0].b64_json))
     CACHE.mkdir(parents=True, exist_ok=True)
     (CACHE / f"{key(p)}.jpg").write_bytes(jpg)
