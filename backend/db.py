@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.getenv("ADLENS_DATA") or ("/tmp/adlens-data" if os.getenv("VERCEL") else ROOT / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 
-def _db_url() -> str:
-    url = os.getenv("DATABASE_URL", "").strip()
+def _db_url(raw: str | None = None) -> str:
+    url = (os.getenv("DATABASE_URL", "") if raw is None else raw).strip()
     if not url:
         return f"sqlite:///{DATA / 'adlens.db'}"
     for old in ("postgres://", "postgresql://"):  # Supabase gives plain postgresql:// — use the psycopg 3 driver
