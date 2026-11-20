@@ -27,7 +27,7 @@ ENABLED = bool(URL and KEY)
 
 # local root -> object key prefix
 ROOTS = [(DATA, "data/"), (ROOT / "cache" / "avatars", "avatars/")]
-SKIP_NAMES = {"upload.bin", "adlens.db", ".secret_key"}
+SKIP_NAMES = {"upload.bin", "adlens.db", ".secret_key", "dev_user.txt"}
 LAZY_NAMES = {"media.bin"}
 SKIP_SUFFIXES = {".lock", ".tmp", ".db-journal", ".db-wal", ".db-shm"}
 

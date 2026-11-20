@@ -2,6 +2,7 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 from sqlmodel import Field, Session, SQLModel, create_engine
 
@@ -15,13 +16,33 @@ def _db_url() -> str:
         return f"sqlite:///{DATA / 'adlens.db'}"
     for old in ("postgres://", "postgresql://"):  # Supabase gives plain postgresql:// — use the psycopg 3 driver
         if url.startswith(old):
-            return "postgresql+psycopg://" + url[len(old):]
+            url = "postgresql+psycopg://" + url[len(old):]
+            break
+    # Passwords often contain @ : / # ?. Split user info at the LAST '@' and percent-encode the password,
+    # so a raw password pasted from the dashboard still works.
+    scheme, rest = url.split("://", 1)
+    if "@" in rest:
+        userinfo, hostpart = rest.rsplit("@", 1)
+        if ":" in userinfo:
+            user, pw = userinfo.split(":", 1)
+            pw = pw.strip("[]")  # leftover brackets from the "[YOUR-PASSWORD]" placeholder
+            url = f"{scheme}://{user}:{quote(unquote(pw), safe='')}@{hostpart}"
+    # drop Prisma-only query options that libpq/psycopg reject
+    if "?" in url:
+        base, query = url.split("?", 1)
+        keep = [kv for kv in query.split("&") if kv and kv.split("=")[0] not in ("pgbouncer", "connection_limit")]
+        url = base + ("?" + "&".join(keep) if keep else "")
     return url
 
 
 DB_URL = _db_url()
-engine = create_engine(DB_URL, pool_pre_ping=True,
-                       connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {})
+if DB_URL.startswith("sqlite"):
+    _args = {"check_same_thread": False}
+elif ":6543/" in DB_URL:  # Supabase transaction pooler: no server-side prepared statements
+    _args = {"prepare_threshold": None}
+else:
+    _args = {}
+engine = create_engine(DB_URL, pool_pre_ping=True, connect_args=_args)
 
 
 def now():
