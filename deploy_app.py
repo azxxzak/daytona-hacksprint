@@ -85,6 +85,20 @@ def _deploy():
     sb = daytona.create(CreateSandboxFromSnapshotParams(language="python", env_vars=keys,
                                                         labels={"app": NAME}, auto_stop_interval=0))
     print("sandbox", sb.id)
+    try:
+        _build_and_start(sb, admin, admin_pw)
+    except BaseException:
+        print("removing the half-built sandbox", sb.id)
+        daytona.delete(sb)
+        raise
+    for o in old:
+        print("removing previous sandbox", o.id)
+        daytona.delete(o)
+    url = sb.create_signed_preview_url(WEB_PORT, expires_in_seconds=URL_TTL)
+    print(f"\n✅ AdLens is live (link valid {URL_TTL // 3600}h):\n{url.url}")
+
+
+def _build_and_start(sb, admin, admin_pw):
     run(sb, f"mkdir -p {APP}")
     sb.fs.upload_file(bundle(), f"{APP}/bundle.tgz")
     run(sb, f"cd {APP} && tar xzf bundle.tgz && rm bundle.tgz")
@@ -92,7 +106,7 @@ def _deploy():
     run(sb, f"cd {APP} && pip install -q -r requirements.txt")
     print("building frontend…")
     run(sb, f"cd {APP}/frontend && npm ci --no-audit --no-fund && "
-            f"SKIP_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=768 npm run build",
+            f"SKIP_TYPECHECK=1 NEXT_BUILD_CPUS=1 NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=768 npm run build",
         timeout=1200)
 
     # first account: password passed through the environment of a one-off command, never written to disk
@@ -112,11 +126,6 @@ def _deploy():
         time.sleep(2)
     else:
         raise SystemExit("the web app did not come up")
-    for o in old:
-        print("removing previous sandbox", o.id)
-        daytona.delete(o)
-    url = sb.create_signed_preview_url(WEB_PORT, expires_in_seconds=URL_TTL)
-    print(f"\n✅ AdLens is live (link valid {URL_TTL // 3600}h):\n{url.url}")
 
 
 def delete():
