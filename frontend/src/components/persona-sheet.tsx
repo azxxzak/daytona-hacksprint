@@ -10,6 +10,7 @@ import type { Key } from "@/lib/i18n";
 import type { Persona, Profile } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { usePersonaMeta } from "./persona-card";
+import { LongProgress } from "./long-progress";
 import { useToast } from "./toast";
 import { Avatar, Button, Dialog, cx } from "./ui";
 
@@ -180,6 +181,8 @@ export function PersonaSheet({
   const [deep, setDeep] = useState<Deep | null>(null);
   const [view, setView] = useState<"summary" | "deep">("summary");
   const [requested, setRequested] = useState<string | null>(null);
+  const posting = useRef(false);
+  const [since, setSince] = useState(0);
 
   const open = !!persona && !!pid;
   const fetchDeep = useCallback(async (id: string) => {
@@ -194,22 +197,29 @@ export function PersonaSheet({
     const tick = async () => {
       const d = await fetchDeep(pid);
       if (stop) return;
-      if (d) setDeep(d);
+      if (d && !(d.status === "none" && posting.current)) setDeep(d);
       if (!d || d.status === "generating") timer = setTimeout(tick, 3000);
     };
     void tick();
     return () => { stop = true; clearTimeout(timer); };
   }, [pid, fetchDeep, requested]);
 
-  const generate = async () => {
+  const generate = () => {
     if (!pid) return;
-    try {
-      await api(`/api/personas/${encodeURIComponent(pid)}/deep`, { method: "POST" });
-      setDeep({ markdown: null, status: "generating" });
-      setRequested(`${pid}:${Date.now()}`);
-    } catch (e) {
-      toast.error(`${t("pf.deepError")} ${errorText(e, t)}`);
-    }
+    // POST can hold for up to ~2 min: show progress immediately, poll GET in parallel
+    posting.current = true;
+    setSince(Date.now());
+    setDeep({ markdown: null, status: "generating" });
+    setRequested(`${pid}:${Date.now()}`);
+    api(`/api/personas/${encodeURIComponent(pid)}/deep`, { method: "POST" })
+      .catch((e) => {
+        setDeep({ markdown: null, status: "none" });
+        toast.error(`${t("pf.deepError")} ${errorText(e, t)}`);
+      })
+      .finally(() => {
+        posting.current = false;
+        setRequested(`${pid}:${Date.now()}`);
+      });
   };
 
   const shown = deep && pid ? deep : null;
@@ -243,7 +253,7 @@ export function PersonaSheet({
                 )
               )}
             </div>
-            {shown?.status === "generating" && <p role="status" className="mt-3 text-xs text-mute">{t("pf.generating")}</p>}
+            {shown?.status === "generating" && <div className="mt-4 rounded-xl bg-canvas p-4"><LongProgress since={since} estimateSec={80} label={t("pf.generating")} /></div>}
             {p ? <ProfileBody profile={p} /> : <CompactProfile persona={persona} />}
             {children}
           </div>

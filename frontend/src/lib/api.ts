@@ -157,3 +157,36 @@ export async function streamAsk(
   }
   if (buf.trim()) flush(buf);
 }
+
+export type UploadInit = { upload_id: string; upload_url: string; method?: "PUT" | "POST"; headers?: Record<string, string> };
+
+/** Direct-to-storage upload: ask the API for a signed URL, then PUT the raw file (XHR for progress). */
+export function uploadFile(file: File, onProgress: (pct: number) => void): { promise: Promise<string>; abort: () => void } {
+  let xhr: XMLHttpRequest | null = null;
+  let aborted = false;
+  const promise = (async () => {
+    const init = await api<UploadInit>("/api/uploads", {
+      method: "POST",
+      json: { filename: file.name, size: file.size, content_type: file.type || "application/octet-stream" },
+    });
+    if (aborted) throw new DOMException("aborted", "AbortError");
+    await new Promise<void>((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      xhr = x;
+      x.open(init.method ?? "PUT", init.upload_url);
+      for (const [k, v] of Object.entries(init.headers ?? {})) x.setRequestHeader(k, v);
+      x.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      x.onerror = () => reject(new ApiError(0, "network"));
+      x.onabort = () => reject(new DOMException("aborted", "AbortError"));
+      x.onload = () => {
+        if (x.status >= 200 && x.status < 300) resolve();
+        else reject(new ApiError(x.status, x.status === 400 || x.status === 401 || x.status === 403 ? "expired" : "upload"));
+      };
+      x.send(file);
+    });
+    return init.upload_id;
+  })();
+  return { promise, abort: () => { aborted = true; xhr?.abort(); } };
+}

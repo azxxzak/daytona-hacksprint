@@ -13,9 +13,10 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from backend import db, jobs
+from backend import db
 from backend.auth import hash_password
 from backend.db import Test, User
+from core.summary import summarize
 
 
 def create_user(email: str, name: str = "", password: str | None = None):
@@ -50,7 +51,7 @@ def import_legacy(email: str):
         if a.get("keyframes"):
             import base64
             (d / "thumb.jpg").write_bytes(base64.b64decode(a["keyframes"][0]["jpg_b64"]))
-        summary = jobs.summarize(rep["gaze"])
+        summary = summarize(rep["gaze"])
         (d / "result.json").write_text(json.dumps(
             {"analysis": a, "gaze": rep["gaze"], "personas": rep["personas"], "summary": summary}, ensure_ascii=False))
         for pid, msgs in (rep.get("chats") or {}).items():

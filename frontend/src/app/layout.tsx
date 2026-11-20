@@ -22,7 +22,7 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const c = (await cookies()).get(LANG_COOKIE)?.value;
-  const lang = isLang(c) ? c : "en";
+  const lang = isLang(c) ? c : "ja";
   return (
     <html lang={lang} className={noto.variable}>
       <body>

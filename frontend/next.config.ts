@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
-const API = process.env.API_ORIGIN ?? "http://localhost:8000";
+// Production (Vercel): set API_ORIGIN to the backend's origin. Files never pass through this rewrite: they go
+// browser -> signed storage URL directly (see POST /api/uploads), so the 4.5 MB Vercel body limit does not apply.
+const API = (process.env.API_ORIGIN ?? "http://localhost:8000").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   // deploy sandboxes have little memory: types are checked locally/CI (`npm run build`), the deploy build sets SKIP_TYPECHECK=1
@@ -8,9 +10,6 @@ const nextConfig: NextConfig = {
   experimental: {
     // the deploy sandbox has ~1 GB RAM: build with one worker there (NEXT_BUILD_CPUS=1); locally use all cores
     ...(process.env.NEXT_BUILD_CPUS ? { cpus: Number(process.env.NEXT_BUILD_CPUS), workerThreads: false } : {}),
-    // ad uploads go through the /api rewrite; allow up to the backend's 500 MB limit and slow interviews
-    proxyClientMaxBodySize: "500mb",
-    proxyTimeout: 600_000,
   },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API}/api/:path*` }];

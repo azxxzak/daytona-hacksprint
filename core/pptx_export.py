@@ -347,9 +347,10 @@ def build_pptx(report: dict, result: dict, test_name: str) -> bytes:
         name = prof.get("full_name") or p.get("name", p["id"])
         meta = prof.get("meta") or f'{p.get("age", "")} / {p.get("gender", "")} / {p.get("occupation", "")} / {p.get("region", "")}'
         s = ns(f'{L["viewer_hi"] if hi else L["viewer_lo"]}: {_clip(name, 30)}')
-        img = Path(avatars.CACHE) / f"{avatars.key(p)}.jpg"
-        if img.exists():
-            s.shapes.add_picture(str(img), MX, Inches(1.6), Inches(3.4), Inches(3.4))
+        raw = avatars.cached(p)
+        img = io.BytesIO(raw) if raw else None
+        if img is not None:
+            s.shapes.add_picture(img, MX, Inches(1.6), Inches(3.4), Inches(3.4))
         text(s, MX, Inches(5.2), Inches(3.4), Inches(0.5), name, 18, True)
         text(s, MX, Inches(5.65), Inches(3.4), Inches(0.9), _clip(meta, 90), 12, False, MUTED)
         text(s, MX + Inches(4.0), Inches(1.6), Inches(6), Inches(0.4),

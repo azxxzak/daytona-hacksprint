@@ -5,7 +5,8 @@ CSV columns recognised (any subset; extra columns are kept as traits):
 """
 import random
 
-import pandas as pd
+import csv
+import io
 
 FIRST = {"F": ["Yui", "Haruka", "Aoi", "Sakura", "Mei", "Yoko", "Keiko", "Naomi", "Rin", "Emi"],
          "M": ["Haruto", "Ren", "Sota", "Takumi", "Kenji", "Hiroshi", "Daiki", "Yuto", "Kaito", "Shin"]}
@@ -57,35 +58,43 @@ def sample_personas(n, age_range, genders, seed=42):
             "media": ", ".join(random.sample(MEDIA, 2)),
             "values": ", ".join(random.sample(TRAITS, 2)),
         })
-    return pd.DataFrame(out)
+    return out
 
 
-def load_csv(file, age_range, genders):
-    df = pd.read_csv(file)
-    df.columns = [c.strip().lower() for c in df.columns]
-    if "id" not in df.columns:
-        df.insert(0, "id", [f"P{i + 1:03d}" for i in range(len(df))])
-    if "age" in df.columns:
-        df = df[df["age"].between(*age_range)]
-    if "gender" in df.columns:
-        wanted = {"F": ("f", "female", "女性", "女"), "M": ("m", "male", "男性", "男")}
-        ok = {v for g in genders for v in wanted[g]}
-        df = df[df["gender"].astype(str).str.lower().isin(ok)]
-    if "name" not in df.columns:
-        df.insert(1, "name", df["id"])
-    return df.reset_index(drop=True)
+def load_csv(data, age_range, genders) -> list[dict]:
+    """Customer CSV -> persona dicts. `data` is bytes, str or a file object. Unknown columns are kept as traits."""
+    if hasattr(data, "read"):
+        data = data.read()
+    text = data.decode("utf-8-sig") if isinstance(data, bytes) else data
+    rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in r.items()} for r in csv.DictReader(io.StringIO(text))]
+    wanted = {"F": ("f", "female", "女性", "女"), "M": ("m", "male", "男性", "男")}
+    ok_gender = {v for g in genders for v in wanted[g]}
+    out = []
+    for r in rows:
+        if r.get("age"):
+            try:
+                r["age"] = int(float(r["age"]))
+            except ValueError:
+                continue
+            if not age_range[0] <= r["age"] <= age_range[1]:
+                continue
+        if r.get("gender") and r["gender"].lower() not in ok_gender:
+            continue
+        out.append(r)
+    for i, r in enumerate(out):
+        r.setdefault("id", f"P{i + 1:03d}")
+        r.setdefault("name", r["id"])
+    return out
 
 
-def with_colors(df):
-    df = df.copy()
-    df["color"] = [COLORS[i % len(COLORS)] for i in range(len(df))]
-    return df
+def with_colors(personas: list[dict]) -> list[dict]:
+    return [{**p, "color": COLORS[i % len(COLORS)]} for i, p in enumerate(personas)]
 
 
 def describe(p: dict) -> str:
     skip = {"color", "profile", "_seed", "avatar_url", "has_deep_profile"}
     base = "; ".join(f"{k}: {v}" for k, v in p.items()
-                     if k not in skip and not isinstance(v, (dict, list)) and pd.notna(v))
+                     if k not in skip and not isinstance(v, (dict, list)) and v not in (None, ""))
     if p.get("profile"):
         from core.persona_profile import compact
         base += f"; profile: {compact(p)}"

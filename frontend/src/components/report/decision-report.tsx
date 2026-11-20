@@ -7,6 +7,7 @@ import { errorText } from "@/lib/errors";
 import type { DecisionReport, Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
 import { useToast } from "../toast";
+import { LongProgress } from "../long-progress";
 import { Button, Card, ErrorNote, SectionHeader, Skeleton, cx } from "../ui";
 
 type State = { status: "none" | "generating" | "ready" | "failed"; report: DecisionReport | null; error?: string };
@@ -186,6 +187,8 @@ export function DecisionReportTab({ test }: { test: Test }) {
   const [editing, setEditing] = useState(false);
   const [tick, setTick] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const posting = useRef(false);
+  const [since, setSince] = useState(() => Date.now());
 
   useEffect(() => {
     let stop = false;
@@ -193,6 +196,10 @@ export function DecisionReportTab({ test }: { test: Test }) {
       try {
         const d = await api<State>(base);
         if (stop) return;
+        if (d.status === "none" && posting.current) {
+          timer.current = setTimeout(run, 3000);
+          return;
+        }
         setState(d);
         setLoadError(null);
         if (d.status === "generating") timer.current = setTimeout(run, 3000);
@@ -207,18 +214,26 @@ export function DecisionReportTab({ test }: { test: Test }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t only changes the error text
   }, [base, tick]);
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(() => {
+    // POST may hold the request for up to ~2 min; show progress right away and keep polling GET as a fallback
     setStarting(true);
-    try {
-      await api(base, { method: "POST", json: { decision_question: question.trim() || undefined, lang } });
-      setState({ status: "generating", report: null });
-      setEditing(false);
-      setTick((n) => n + 1);
-    } catch (e) {
-      toast.error(errorText(e, t));
-    } finally {
-      setStarting(false);
-    }
+    posting.current = true;
+    setSince(Date.now());
+    setState({ status: "generating", report: null });
+    setEditing(false);
+    setTick((n) => n + 1);
+    api(base, { method: "POST", json: { decision_question: question.trim() || undefined, lang } })
+      .catch((e) => {
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+          setState({ status: "none", report: null });
+          toast.error(errorText(e, t));
+        }
+      })
+      .finally(() => {
+        posting.current = false;
+        setStarting(false);
+        setTick((n) => n + 1);
+      });
   }, [base, question, lang, toast, t]);
 
   if (loadError && !state) return <ErrorNote action={<Button variant="outline" size="sm" onClick={() => setTick((n) => n + 1)}>{t("common.retry")}</Button>}>{loadError}</ErrorNote>;
@@ -226,8 +241,10 @@ export function DecisionReportTab({ test }: { test: Test }) {
 
   if (state.status === "generating") {
     return (
-      <div role="status" className="space-y-4">
-        <p className="pulse text-sm text-mute">{t("dr.generating")}</p>
+      <div className="space-y-6">
+        <div className="mx-auto max-w-xl rounded-card bg-surface p-6">
+          <LongProgress since={since} estimateSec={75} label={t("dr.generating")} />
+        </div>
         <Skeleton className="h-28" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32" />)}</div>
         <Skeleton className="h-48" />

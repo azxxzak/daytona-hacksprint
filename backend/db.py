@@ -7,7 +7,7 @@ from urllib.parse import quote, unquote
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = Path(os.getenv("ADLENS_DATA", ROOT / "data"))
+DATA = Path(os.getenv("ADLENS_DATA") or ("/tmp/adlens-data" if os.getenv("VERCEL") else ROOT / "data"))
 DATA.mkdir(parents=True, exist_ok=True)
 
 def _db_url() -> str:
@@ -42,7 +42,11 @@ elif ":6543/" in DB_URL:  # Supabase transaction pooler: no server-side prepared
     _args = {"prepare_threshold": None}
 else:
     _args = {}
-engine = create_engine(DB_URL, pool_pre_ping=True, connect_args=_args)
+if os.getenv("VERCEL"):  # serverless: short-lived instances behind Supabase's pooler, don't hold connections
+    from sqlalchemy.pool import NullPool
+    engine = create_engine(DB_URL, poolclass=NullPool, connect_args=_args)
+else:
+    engine = create_engine(DB_URL, pool_pre_ping=True, connect_args=_args)
 
 
 def now():
@@ -74,20 +78,47 @@ class Test(SQLModel, table=True):
     engaged: int | None = None
     avg_interest: float | None = None
     where: str | None = None
+    worker_id: str | None = None              # Daytona sandbox running this test
+    worker_checked_at: float = 0.0            # last time a poll looked at the worker (throttle)
+    started_at: float = 0.0
+
+
+class Usage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    at: datetime = Field(default_factory=now, index=True)
+    user: str = Field(index=True)
+    tag: str = ""
+    model: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
+    usd: float = 0.0
+
+
+_NEW_COLUMNS = {  # columns added after the first deploy; create_all() does not alter existing tables
+    "test": [("worker_id", "VARCHAR"), ("worker_checked_at", "FLOAT DEFAULT 0"), ("started_at", "FLOAT DEFAULT 0")],
+}
+_inited = False
 
 
 def init():
+    global _inited
+    if _inited:
+        return
     SQLModel.metadata.create_all(engine)
+    if engine.dialect.name == "postgresql":
+        from sqlalchemy import text
+        with engine.begin() as c:
+            for table, cols in _NEW_COLUMNS.items():
+                for name, typ in cols:
+                    c.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS {name} {typ}'))
+    _inited = True
 
 
 def session():
     return Session(engine)
 
 
-def test_dir(test_id: str) -> Path:
-    d = DATA / "tests" / test_id
-    if not d.exists():
-        from core import blobstore
-        blobstore.ensure_dir(d)  # restore a test that only exists in Supabase storage
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def test_dir(test_id: str):
+    """Folder of one test in object storage (Supabase) — or in the local data folder in development."""
+    from core.store import SPath
+    return SPath(f"tests/{test_id}")

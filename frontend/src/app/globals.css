@@ -26,6 +26,19 @@ body {
   min-height: 100dvh;
 }
 
+/* Japanese typesetting: strict line breaking, phrase-aware wrapping in headings, no orphans */
+html[lang="ja"] body {
+  line-break: strict;
+  overflow-wrap: anywhere;
+}
+html[lang="ja"] :is(h1, h2, h3, h4) {
+  word-break: auto-phrase;
+  text-wrap: balance;
+}
+html[lang="ja"] :is(p, li, dd) {
+  text-wrap: pretty;
+}
+
 .tnum {
   font-variant-numeric: tabular-nums;
 }

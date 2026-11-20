@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Film, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Film, Image as ImageIcon, Sparkles, Users, Upload, MessageCircle, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { usePolled, isActive } from "@/lib/hooks";
@@ -120,6 +120,36 @@ function TestCard({ test, onDelete, onRename }: { test: TestSummary & { progress
   );
 }
 
+function FirstRun() {
+  const { t } = useI18n();
+  const steps = [
+    { Icon: Users, title: t("dash.s1t"), body: t("dash.s1d") },
+    { Icon: Upload, title: t("dash.s2t"), body: t("dash.s2d") },
+    { Icon: MessageCircle, title: t("dash.s3t"), body: t("dash.s3d") },
+  ];
+  return (
+    <div className="mt-4 rounded-[20px] bg-surface p-6 sm:p-10">
+      <h2 className="max-w-2xl text-balance text-2xl font-bold leading-snug tracking-tight sm:text-4xl">{t("dash.howTitle")}</h2>
+      <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-mute">{t("dash.howSub")}</p>
+      <ol className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+        {steps.map((s, i) => (
+          <li key={s.title} className="rounded-card bg-canvas p-5">
+            <div className="flex items-center gap-3">
+              <span className="tnum grid size-8 place-items-center rounded-full bg-ink text-sm font-bold text-lime" aria-hidden>{i + 1}</span>
+              <s.Icon size={18} className="text-mute" aria-hidden />
+            </div>
+            <h3 className="mt-4 text-base font-bold">{s.title}</h3>
+            <p className="mt-1 text-sm leading-relaxed text-mute">{s.body}</p>
+          </li>
+        ))}
+      </ol>
+      <Link href="/tests/new" className={buttonClass("primary", "lg", "mt-8")}>
+        <Plus size={18} aria-hidden /> {t("dash.start")}
+      </Link>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { t } = useI18n();
   const { data, error, loading, reload } = usePolled<{ tests: (TestSummary & { progress?: Progress })[] }>(
@@ -138,6 +168,7 @@ export function Dashboard() {
   const [newName, setNewName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const all = data?.tests ?? [];
+  const sample = all.length <= 4 ? all.find((x) => x.status === "done") : undefined;
   const tests = all.filter((x) => {
     const okStatus = filter === "all" || (filter === "running" ? isActive(x) : x.status === filter);
     return okStatus && x.name.toLowerCase().includes(query.trim().toLowerCase());
@@ -218,19 +249,24 @@ export function Dashboard() {
         )}
 
         {data && all.length === 0 && (
-          <div className="mx-auto mt-10 max-w-md rounded-[18px] bg-surface px-8 py-14 text-center">
-            <div className="mx-auto grid size-12 place-items-center rounded-full bg-ink text-lime">
-              <Plus size={22} aria-hidden />
-            </div>
-            <h2 className="mt-5 text-xl font-bold">{t("dash.emptyTitle")}</h2>
-            <p className="mx-auto mt-2 max-w-sm text-sm text-mute">{t("dash.emptyBody")}</p>
-          </div>
+          <FirstRun />
         )}
 
         {all.length > 0 && tests.length === 0 && <p className="py-10 text-center text-sm text-mute">{t("dash.noMatch")}</p>}
 
         {tests.length > 0 && (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {sample && query === "" && filter === "all" && (
+              <li>
+                <Link href={`/tests/${sample.id}`} className="group relative flex h-full min-h-[200px] flex-col justify-between overflow-hidden rounded-card bg-ink p-5 text-white transition-transform hover:-translate-y-0.5">
+                  <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium"><Sparkles size={12} className="text-lime" aria-hidden /> {t("dash.sample")}</span>
+                  <span>
+                    <span className="block text-lg font-bold leading-snug">{t("dash.sampleD")}</span>
+                    <span className="mt-3 inline-flex items-center gap-1.5 text-sm text-lime">{t("dash.open")} <ArrowRight size={14} aria-hidden /></span>
+                  </span>
+                </Link>
+              </li>
+            )}
             {tests.map((x) => (
               <li key={x.id}>
                 <TestCard test={x} onDelete={() => setPendingDelete(x)} onRename={() => { setNewName(x.name); setRenaming(x); }} />
@@ -240,11 +276,11 @@ export function Dashboard() {
         )}
       </div>
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center">
+      {all.length > 0 && <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center">
         <Link href="/tests/new" className={buttonClass("primary", "lg", "pointer-events-auto pl-5")}>
           <Plus size={18} aria-hidden /> {t("dash.new")}
         </Link>
-      </div>
+      </div>}
 
       <Dialog open={!!renaming} onClose={() => !renameBusy && setRenaming(null)} label={t("rename.title")}>
         <form onSubmit={(e) => { e.preventDefault(); void saveRename(); }}>

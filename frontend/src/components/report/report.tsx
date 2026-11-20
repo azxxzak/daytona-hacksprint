@@ -54,17 +54,37 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
         <Link href="/" className="mb-4 inline-flex items-center gap-1.5 text-sm text-mute hover:text-ink">
           <ArrowLeft size={15} aria-hidden /> {t("common.back")}
         </Link>
-        <p className="tnum text-xs text-mute">{date} · {t("rep.viewersCount", { n: test.viewers })}</p>
-        <TestName test={test} onRenamed={onRenamed} />
-        {s && (
-          <>
-            <p className="mt-2 max-w-4xl text-balance text-[28px] font-bold leading-snug tracking-tight sm:text-4xl">{verdict}</p>
-            <p className="tnum mt-3 text-sm text-mute">
-              {s.top_focus && <>{t("rep.topFocus")}: <span className="text-ink">{s.top_focus}</span> · </>}
-              {t("rep.avgInterest")}: <span className="text-ink">{t("rep.outOf5", { v: s.avg_interest.toFixed(1) })}</span>
-            </p>
-          </>
-        )}
+        <div className="rounded-[20px] bg-surface p-6 sm:p-10">
+          <p className="tnum text-xs text-mute">{date} · {t("rep.viewersCount", { n: test.viewers })}</p>
+          <TestName test={test} onRenamed={onRenamed} />
+          {s && (
+            <>
+              <p className="mt-4 max-w-4xl text-balance text-[28px] font-bold leading-snug tracking-tight sm:text-[44px] sm:leading-[1.25]">{verdict}</p>
+              <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-line pt-6 sm:grid-cols-4">
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("rep.engagedLabel")}</dt>
+                  <dd className="tnum mt-1 text-2xl font-bold">{s.engaged}<span className="text-base font-medium text-mute"> / {s.total}</span></dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("rep.avgInterest")}</dt>
+                  <dd className="tnum mt-1 text-2xl font-bold">{s.avg_interest.toFixed(1)}<span className="text-base font-medium text-mute"> / 5</span></dd>
+                </div>
+                {s.low_t != null && test.media_kind === "video" && (
+                  <div>
+                    <dt className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("rep.lowLabel")}</dt>
+                    <dd className="tnum mt-1 text-2xl font-bold">{fmtTime(s.low_t)}</dd>
+                  </div>
+                )}
+                {s.top_focus && (
+                  <div className="col-span-2 sm:col-span-1">
+                    <dt className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("rep.topFocus")}</dt>
+                    <dd className="mt-1 text-base font-bold leading-snug">{s.top_focus}</dd>
+                  </div>
+                )}
+              </dl>
+            </>
+          )}
+        </div>
       </header>
 
       <Player ref={player} test={test} />

@@ -7,12 +7,13 @@ Tier 2 (`deep`): a long markdown report (insights, contradictions, communication
 import hashlib
 import json
 import re
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from core import llm
+from core.store import SPath
 
-DIR = llm.DATA / "profiles"
+DIR = SPath("profiles")  # object storage (Supabase) or the local data folder
 
 PROFILE_RULES = """Rules for realism (important):
 - Make each person specific and a little inconsistent, like a real person. Give them real friction: budget limits,
@@ -64,8 +65,15 @@ def _parse_list(text):
 
 
 def cached(p: dict) -> dict | None:
-    f = DIR / f"{seed_key(p)}.json"
-    return json.loads(f.read_text()) if f.exists() else None
+    try:
+        return json.loads(_profile_text(seed_key(p)))
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=4096)
+def _profile_text(k: str) -> str:
+    return (DIR / f"{k}.json").read_text()  # profiles are immutable; cache hits in memory
 
 
 def _generate_batch(batch, model):
@@ -145,7 +153,7 @@ Profile:
 Attributes: {seed}"""
 
 
-def deep_path(p: dict) -> Path:
+def deep_path(p: dict) -> SPath:
     return DIR / f"{seed_key(p)}.deep.md"
 
 

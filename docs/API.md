@@ -214,3 +214,43 @@ type DecisionReport = {
 |---|---|
 | `POST /api/tests/{id}/talks/{talk_id}/estimate` | body `{ rounds: number }` → `{ usd: number, basis: "measured" \| "price_list", per_round_usd: number }` — shown next to Send / Auto |
 | `GET /api/usage` | `{ month_usd: number, tests: number, talk_messages: number }` for the signed-in user |
+
+## v4 — Vercel deployment, direct uploads, persona bank
+
+Architecture: browser → Vercel (Next.js + FastAPI as a Python function, same origin via rewrite) → Supabase
+(Postgres + Storage). Each test runs in its own Daytona sandbox (the "worker", started from a prebuilt snapshot);
+the worker writes results to Supabase Storage over HTTPS. Vercel functions are short-lived: nothing runs in
+background threads; long work is either in the worker or a request the client waits on.
+
+### Direct upload (Vercel request bodies are limited to 4.5 MB)
+| Method & path | Body | Response |
+|---|---|---|
+| `POST /api/uploads` | `{ filename, size, content_type }` | `{ upload_id, upload_url, method: "PUT", headers: {...} }` — a signed Supabase Storage URL valid 2 h |
+The browser PUTs the raw file to `upload_url` with `headers` (use XHR for progress), then creates the test.
+
+### Create a test (JSON instead of multipart)
+`POST /api/tests` body:
+```ts
+{
+  upload_id: string; name?: string; context?: string;
+  panel:
+    | { source: "bank"; age_min: number; age_max: number; genders: ("F"|"M")[]; count: number;   // 5..60
+        regions?: string[]; occupations?: string[]; seed?: number }
+    | { source: "library"; persona_ids: string[] }
+    | { source: "csv"; csv_upload_id: string; age_min: number; age_max: number; genders: ("F"|"M")[]; count: number }
+}
+```
+→ `201 { id }`. The old multipart form stays accepted for local development only.
+
+### Persona bank (5,000 Japanese residents, weighted to population statistics)
+| Method & path | Response |
+|---|---|
+| `GET /api/audience/preview?age_min&age_max&genders=F,M&count&regions=&occupations=&seed=` | `{ personas: Persona[], matched: number }` — `matched` = how many bank personas fit the filters |
+| `GET /api/audience/facets` | `{ total, regions: {name, count}[], occupations: {name, count}[], age_bands: {band, count}[] }` |
+Bank personas have ids `bank_00001` … and always carry a tier-1 `profile`. Portraits are drawn on first view
+(`avatar_url`, can take ~20 s; show a placeholder).
+
+### Long requests the client waits on
+`POST /api/tests/{id}/report` and `POST /api/personas/{pid}/deep` may now hold the request until the work is
+done (up to ~2 min) and then return the same body as their `GET`. Keep polling `GET` as a fallback; show a
+progress state, not a frozen button.

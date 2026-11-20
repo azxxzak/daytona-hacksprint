@@ -41,10 +41,8 @@ def _owned_test(test_id: str, user) -> tuple[Test, Path]:
     return t, test_dir(test_id)
 
 
-def _write_json(path: Path, data: dict):
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)         # atomic: readers never see a half-written file
+def _write_json(path, data: dict):
+    path.write_text(json.dumps(data, ensure_ascii=False))  # object storage writes are atomic per object
 
 
 def _status(d: Path) -> dict:
@@ -73,8 +71,9 @@ def _work(test_id: str, d: Path, test: Test, body: ReportIn, started: float):
                                                "error": f"Report generation failed ({type(e).__name__}). Try again."})
 
 
-@router.post("/api/tests/{test_id}/report", status_code=202)
+@router.post("/api/tests/{test_id}/report")
 def create_report(test_id: str, body: ReportIn, user=CurrentUser):
+    """Runs generation inside the request (serverless: no background threads) and returns the result."""
     test, d = _owned_test(test_id, user)
     if test.status != "done" or not (d / "result.json").exists():
         raise HTTPException(409, "The test has not finished yet.")
@@ -85,8 +84,8 @@ def create_report(test_id: str, body: ReportIn, user=CurrentUser):
         _write_json(d / "report_status.json", {"status": "generating", "started": started})
     from core import llm
     llm.current_user.set(user.email)  # bill the report to its owner
-    threading.Thread(target=llm.bind(_work), args=(test_id, d, test, body, started), daemon=True).start()
-    return {"status": "generating"}
+    _work(test_id, d, test, body, started)
+    return get_report(test_id, user)
 
 
 @router.get("/api/tests/{test_id}/report")

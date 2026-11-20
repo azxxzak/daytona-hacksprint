@@ -4,11 +4,13 @@ import hashlib
 import io
 import os
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from functools import lru_cache
 
 from PIL import Image
 
-CACHE = Path(__file__).resolve().parent.parent / "cache" / "avatars"
+from core.store import SPath
+
+CACHE = SPath("avatars")  # object storage (Supabase) or the local data folder
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2.6-sunburst")
 IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "medium")   # low | medium | high
 PORTRAIT_VERSION = "v2"                                 # bump to redraw every portrait
@@ -41,8 +43,19 @@ def _thumb(png: bytes, size=768) -> bytes:
 
 
 def cached(p: dict) -> bytes | None:
-    f = CACHE / f"{key(p)}.jpg"
-    return f.read_bytes() if f.exists() else None
+    return _cached_key(key(p))
+
+
+@lru_cache(maxsize=512)
+def _cached_key_hit(k: str) -> bytes:
+    return (CACHE / f"{k}.jpg").read_bytes()
+
+
+def _cached_key(k: str) -> bytes | None:
+    try:
+        return _cached_key_hit(k)  # portraits never change once drawn, so hits are cached in memory
+    except (FileNotFoundError, OSError):
+        return None
 
 
 def generate_one(p: dict) -> bytes:

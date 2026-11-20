@@ -1,76 +1,107 @@
 """AdLens API. Run: .venv/bin/uvicorn backend.main:app --port 8000"""
-import io
+import base64
+import hashlib
 import json
 import logging
 import re
-import shutil
-import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from sqlmodel import select  # noqa: E402
 
-from backend import auth, db, jobs  # noqa: E402
+from backend import auth, db, worker_ctl  # noqa: E402
 from backend.db import Test, User  # noqa: E402
-from core import avatars, blobstore  # noqa: E402
-from core import library, llm, persona_profile, themes as themes_mod  # noqa: E402
+from core import avatars, library, llm, persona_profile, store, themes as themes_mod  # noqa: E402
 from core import talk as talk_mod  # noqa: E402
 from core.gaze import chat_with_persona  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
+from core.store import SPath  # noqa: E402
+
+try:  # 5,000-person bank (Supabase); falls back to synthetic sampling until it is built
+    from core import persona_bank
+except Exception:  # noqa: BLE001
+    persona_bank = None
 
 logging.basicConfig(level=logging.INFO)
 db.init()
-blobstore.start()  # Supabase storage sync (no-op when not configured)
 app = FastAPI(title="AdLens API", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 MAX_UPLOAD = 500 * 1024 * 1024
 MEDIA_TYPES = {".mp4": ("video", "video/mp4"), ".mov": ("video", "video/quicktime"), ".webm": ("video", "video/webm"),
                ".png": ("image", "image/png"), ".jpg": ("image", "image/jpeg"), ".jpeg": ("image", "image/jpeg")}
-AVATAR_INDEX = avatars.CACHE
+UPLOAD_ID = re.compile(r"[a-f0-9]{24}\.(mp4|mov|webm|png|jpg|jpeg|csv)")
 
 
 # ---------------- helpers ----------------
-def persona_out(p: dict) -> dict:
-    """Public persona shape; also remembers the profile so its portrait can be drawn on demand."""
-    k = avatars.key(p)
-    AVATAR_INDEX.mkdir(parents=True, exist_ok=True)
-    idx = AVATAR_INDEX / f"{k}.json"
-    if not idx.exists():
-        idx.write_text(json.dumps(p, ensure_ascii=False, default=str))
+def _gender(p):
+    g = str(p.get("gender", "")).strip().lower()
+    return "Female" if g in ("f", "female", "女性", "女") else "Male" if g in ("m", "male", "男性", "男") else p.get("gender", "")
+
+
+def avatar_url(p: dict) -> str:
+    src = p.get("source_id") or p.get("library_id") or (p["id"] if str(p.get("id", "")).startswith(("bank_", "lib_")) else "")
+    if src:
+        return f"/api/avatars/p/{src}.jpg"
+    return f"/api/avatars/{avatars.key(p)}.jpg"
+
+
+def register_portraits(personas: list[dict]):
+    """Personas that are not in the bank/library get an index file so their portrait can be drawn later."""
+    for p in personas:
+        if not (p.get("source_id") or p.get("library_id")):
+            (avatars.CACHE / f"{avatars.key(p)}.json").write_text(json.dumps(p, ensure_ascii=False, default=str))
+
+
+def persona_out(p: dict, with_deep=False) -> dict:
     fields = ("id", "name", "age", "gender", "region", "occupation", "income", "interests", "media", "values", "color")
     out = {f: p.get(f, "") for f in fields}
     out["age"] = int(p.get("age") or 0)
-    g = str(p.get("gender", "")).strip().lower()
-    out["gender"] = "Female" if g in ("f", "female", "女性", "女") else "Male" if g in ("m", "male", "男性", "男") else p.get("gender", "")
-    out["avatar_url"] = f"/api/avatars/{k}.jpg"
+    out["gender"] = _gender(p)
+    out["avatar_url"] = avatar_url(p)
     if p.get("profile"):
         out["profile"] = p["profile"]
-        out["has_deep_profile"] = persona_profile.deep_status(p) == "ready"
+        if with_deep:
+            out["has_deep_profile"] = persona_profile.deep_status(p) == "ready"
     return out
 
 
-def build_panel(age_min, age_max, genders, count, csv_bytes=None) -> list[dict]:
-    if age_min > age_max or not (5 <= count <= 60):
-        raise HTTPException(400, "Age range or viewer count is out of bounds.")
-    gs = [g for g in genders.split(",") if g in ("F", "M")]
+def _genders(genders) -> list[str]:
+    gs = [g for g in (genders.split(",") if isinstance(genders, str) else genders) if g in ("F", "M")]
     if not gs:
         raise HTTPException(400, "Pick at least one gender.")
-    if csv_bytes:
-        df = load_csv(io.BytesIO(csv_bytes), (age_min, age_max), gs).head(count)
-        if df.empty:
-            raise HTTPException(400, "No one in the CSV matches this age range and gender.")
-    else:
-        df = sample_personas(count, (age_min, age_max), gs)
-    return with_colors(df).to_dict("records")
+    return gs
+
+
+def bank_panel(age_min, age_max, genders, count, regions=None, occupations=None, seed=None):
+    if age_min > age_max or not (5 <= count <= 60):
+        raise HTTPException(400, "Age range or viewer count is out of bounds.")
+    gs = _genders(genders)
+    if persona_bank is not None:
+        try:
+            ps, matched = persona_bank.sample(age_min, age_max, gs, count, regions=regions or None,
+                                              occupations=occupations or None, seed=seed)
+            if ps:
+                return with_colors(ps), matched
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("adlens").warning("persona bank unavailable: %s", e)
+    return with_colors(sample_personas(count, (age_min, age_max), gs, seed=seed or 42)), None
+
+
+def csv_panel(csv_bytes, age_min, age_max, genders, count):
+    ps = load_csv(csv_bytes, (age_min, age_max), _genders(genders))[:count]
+    if not ps:
+        raise HTTPException(400, "No one in the CSV matches this age range and gender.")
+    return with_colors(ps)
 
 
 def own_test(test_id: str, user: User) -> Test:
@@ -86,8 +117,26 @@ def own_test(test_id: str, user: User) -> Test:
 def summary_out(t: Test) -> dict:
     return {"id": t.id, "name": t.name, "created_at": t.created_at.isoformat(), "status": t.status,
             "viewers": t.viewers, "media_kind": t.media_kind,
-            "thumb_url": f"/api/tests/{t.id}/thumb.jpg" if (db.test_dir(t.id) / "thumb.jpg").exists() else None,
+            "thumb_url": f"/api/tests/{t.id}/thumb.jpg" if t.status == "done" else None,
             "engaged": t.engaged, "avg_interest": t.avg_interest}
+
+
+def _owner_tag(user: User) -> str:
+    return hashlib.sha1(user.email.encode()).hexdigest()[:12]
+
+
+def _upload_key(user: User, upload_id: str) -> str:
+    if not UPLOAD_ID.fullmatch(upload_id or ""):
+        raise HTTPException(400, "Unknown upload.")
+    return f"uploads/{_owner_tag(user)}/{upload_id}"
+
+
+def _redirect(path: SPath, expires=3600, cache=True) -> Response:
+    url = path.signed_download_url(expires=expires)
+    if not url:
+        raise HTTPException(404, "Not found.")
+    headers = {"Cache-Control": f"private, max-age={expires - 120}"} if cache else {}
+    return RedirectResponse(url, status_code=302, headers=headers)
 
 
 # ---------------- auth ----------------
@@ -120,68 +169,164 @@ def me(user: User = auth.CurrentUser):
 # ---------------- audience ----------------
 @app.get("/api/audience/preview")
 def preview(age_min: int = 20, age_max: int = 45, genders: str = "F,M", count: int = 20,
-            user: User = auth.CurrentUser):
-    return {"personas": [persona_out(p) for p in build_panel(age_min, age_max, genders, count)]}
+            regions: str = "", occupations: str = "", seed: int | None = None, user: User = auth.CurrentUser):
+    ps, matched = bank_panel(age_min, age_max, genders, count, _csv_list(regions), _csv_list(occupations), seed)
+    return {"personas": [persona_out(p) for p in ps], "matched": matched}
+
+
+def _csv_list(s: str) -> list[str]:
+    return [x.strip() for x in (s or "").split(",") if x.strip()]
+
+
+@app.get("/api/audience/facets")
+def facets(user: User = auth.CurrentUser):
+    if persona_bank is None:
+        return {"total": 0, "regions": [], "occupations": [], "age_bands": []}
+    return persona_bank.facets()
+
+
+def _persona_by_source(pid: str) -> dict | None:
+    if pid.startswith("lib_"):
+        return library.all_personas().get(pid)
+    if pid.startswith("bank_") and persona_bank is not None:
+        got = persona_bank.get([pid])
+        return got[0] if got else None
+    return None
+
+
+def _serve_portrait(p: dict) -> Response:
+    jpg = avatars.CACHE / f"{avatars.key(p)}.jpg"
+    if avatars.cached(p) is None:
+        if not avatars.available():
+            raise HTTPException(404, "Portrait not available.")
+        try:
+            avatars.generate_one(p)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Could not draw the portrait: {str(e)[:120]}") from None
+    return _redirect(jpg, expires=24 * 3600)
+
+
+@app.get("/api/avatars/p/{pid}.jpg")
+def avatar_by_persona(pid: str, user: User = auth.CurrentUser):
+    if not re.fullmatch(r"(lib|bank)_[A-Za-z0-9_]{1,40}", pid):
+        raise HTTPException(404, "Not found.")
+    p = _persona_by_source(pid)
+    if not p:
+        raise HTTPException(404, "Persona not found.")
+    return _serve_portrait(p)
 
 
 @app.get("/api/avatars/{key}.jpg")
 def avatar(key: str, user: User = auth.CurrentUser):
     if not re.fullmatch(r"[a-f0-9]{16}", key):
         raise HTTPException(404, "Not found.")
-    jpg = AVATAR_INDEX / f"{key}.jpg"
-    if not blobstore.ensure_local(jpg):
-        idx = AVATAR_INDEX / f"{key}.json"
-        if not idx.exists() or not avatars.available():
-            raise HTTPException(404, "Portrait not available.")
-        try:
-            avatars.generate_one(json.loads(idx.read_text()))
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"Could not draw the portrait: {str(e)[:120]}") from None
-    return FileResponse(jpg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000"})
+    if avatars._cached_key(key) is not None:
+        return _redirect(avatars.CACHE / f"{key}.jpg", expires=24 * 3600)
+    idx = avatars.CACHE / f"{key}.json"
+    try:
+        p = json.loads(idx.read_text())
+    except (FileNotFoundError, OSError, ValueError):
+        raise HTTPException(404, "Portrait not available.") from None
+    return _serve_portrait(p)
+
+
+# ---------------- uploads (browser -> Supabase Storage directly) ----------------
+class UploadIn(BaseModel):
+    filename: str
+    size: int = 0
+    content_type: str = ""
+
+
+@app.post("/api/uploads")
+def create_upload(body: UploadIn, user: User = auth.CurrentUser):
+    ext = PurePosixPath(body.filename).suffix.lower()
+    if ext not in MEDIA_TYPES and ext != ".csv":
+        raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG, JPG or CSV file.")
+    if body.size > MAX_UPLOAD:
+        raise HTTPException(413, "The file is larger than 500 MB.")
+    upload_id = f"{uuid.uuid4().hex[:24]}{ext}"
+    url = SPath(_upload_key(user, upload_id)).signed_upload_url()
+    if not url:
+        raise HTTPException(501, "Direct uploads need Supabase storage to be configured.")
+    ctype = body.content_type or ("text/csv" if ext == ".csv" else MEDIA_TYPES[ext][1])
+    return {"upload_id": upload_id, "upload_url": url, "method": "PUT",
+            "headers": {"content-type": ctype, "x-upsert": "true"}}
 
 
 # ---------------- tests ----------------
-@app.post("/api/tests", status_code=201)
-async def create_test(media: UploadFile = File(...), age_min: int = Form(20), age_max: int = Form(45),
-                      genders: str = Form("F,M"), count: int = Form(20), context: str = Form(""),
-                      name: str = Form(""), people_csv: UploadFile | None = File(None),
-                      library_persona_ids: str = Form(""), user: User = auth.CurrentUser):
-    ext = Path(media.filename or "").suffix.lower()
-    if ext not in MEDIA_TYPES:
-        raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG or JPG file.")
-    if library_persona_ids.strip():
+class PanelIn(BaseModel):
+    source: str = "bank"
+    age_min: int = 20
+    age_max: int = 45
+    genders: list[str] = ["F", "M"]
+    count: int = 20
+    regions: list[str] = []
+    occupations: list[str] = []
+    seed: int | None = None
+    persona_ids: list[str] = []
+    csv_upload_id: str = ""
+
+
+class NewTestIn(BaseModel):
+    upload_id: str
+    name: str = ""
+    context: str = ""
+    lang: str = "ja"
+    panel: PanelIn = PanelIn()
+
+
+def _panel_from(body: NewTestIn, user: User) -> list[dict]:
+    pn = body.panel
+    if pn.source == "library":
         lib = library.all_personas()
-        ids = list(dict.fromkeys(i.strip() for i in library_persona_ids.split(",") if i.strip()))
+        ids = list(dict.fromkeys(pn.persona_ids))
         if not (1 <= len(ids) <= 60) or any(i not in lib for i in ids):
             raise HTTPException(400, "Pick between 1 and 60 personas from the library.")
-        personas = []
-        for n, i in enumerate(ids):  # test-local ids keep the rest of the pipeline unchanged
-            personas.append({**lib[i], "library_id": i, "id": f"P{n + 1:03d}"})
+        return [{**lib[i], "library_id": i, "source_id": i, "id": f"P{n + 1:03d}"} for n, i in enumerate(ids)]
+    if pn.source == "csv":
+        try:
+            raw = SPath(_upload_key(user, pn.csv_upload_id)).read_bytes()
+        except FileNotFoundError:
+            raise HTTPException(400, "The CSV upload was not found. Upload it again.") from None
+        ps = csv_panel(raw, pn.age_min, pn.age_max, pn.genders, pn.count)
     else:
-        csv_bytes = await people_csv.read() if people_csv else None
-        personas = build_panel(age_min, age_max, genders, count, csv_bytes)
+        ps, _ = bank_panel(pn.age_min, pn.age_max, pn.genders, pn.count, pn.regions, pn.occupations, pn.seed)
+    out = []
+    for n, p in enumerate(ps):
+        src = p["id"] if str(p.get("id", "")).startswith("bank_") else None
+        out.append({**p, "id": f"P{n + 1:03d}", **({"source_id": src} if src else {})})
+    return out
 
-    test_id = uuid.uuid4().hex[:12]
-    d = db.test_dir(test_id)
-    size = 0
-    with open(d / "upload.bin", "wb") as f:
-        while chunk := await media.read(1 << 20):
-            size += len(chunk)
-            if size > MAX_UPLOAD:
-                f.close()
-                shutil.rmtree(d, ignore_errors=True)
-                raise HTTPException(413, "The file is larger than 500 MB.")
-            f.write(chunk)
 
+@app.post("/api/tests", status_code=201)
+def create_test(body: NewTestIn, user: User = auth.CurrentUser):
+    media_key = _upload_key(user, body.upload_id)
+    ext = PurePosixPath(body.upload_id).suffix.lower()
+    if ext not in MEDIA_TYPES:
+        raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG or JPG file.")
+    if not SPath(media_key).exists():
+        raise HTTPException(400, "The upload did not finish. Upload the file again.")
+    personas = _panel_from(body, user)
+    register_portraits(personas)
     kind, mime = MEDIA_TYPES[ext]
-    for p in personas:
-        persona_out(p)  # register portraits
+    test_id = uuid.uuid4().hex[:12]
+    (db.test_dir(test_id) / "personas.json").write_text(json.dumps(personas, ensure_ascii=False, default=str))
     with db.session() as s:
-        s.add(Test(id=test_id, owner=user.email, name=(name.strip() or Path(media.filename).stem)[:120],
-                   context=context[:500],
-                   media_kind=kind, mime=mime, viewers=len(personas), message="Waiting to start"))
+        t = Test(id=test_id, owner=user.email, name=(body.name.strip() or "Untitled test")[:120],
+                 context=body.context[:500], media_kind=kind, mime=mime, viewers=len(personas),
+                 message="Waiting to start")
+        s.add(t)
         s.commit()
-    jobs.submit(test_id, media.filename, personas, context, owner=user.email)
+        s.refresh(t)
+    try:
+        worker_ctl.start(t, personas, media_key, body.upload_id, mime, body.lang)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("adlens").exception("worker start failed")
+        with db.session() as s:
+            row = s.get(Test, test_id)
+            row.status, row.error = "failed", f"Could not start the analysis: {str(e)[:200]}"
+            s.add(row)
+            s.commit()
     return {"id": test_id}
 
 
@@ -189,26 +334,44 @@ async def create_test(media: UploadFile = File(...), age_min: int = Form(20), ag
 def list_tests(user: User = auth.CurrentUser):
     with db.session() as s:
         rows = s.exec(select(Test).where(Test.owner == user.email).order_by(Test.created_at.desc())).all()
+    rows = [worker_ctl.poll(t) if t.status in ("queued", "running") else t for t in rows]
     return {"tests": [summary_out(t) for t in rows]}
+
+
+def _result_text(t: Test) -> str:
+    return store.cached_json(f"tests/{t.id}/result.json", version=f"{t.status}:{t.percent}")
+
+
+def _result(t: Test) -> dict:
+    if t.status != "done":
+        raise HTTPException(409, "The test has not finished yet.")
+    try:
+        return json.loads(_result_text(t))
+    except FileNotFoundError:
+        raise HTTPException(409, "The test result is missing.") from None
 
 
 @app.get("/api/tests/{test_id}")
 def get_test(test_id: str, user: User = auth.CurrentUser):
-    t = own_test(test_id, user)
+    t = worker_ctl.poll(own_test(test_id, user))
     out = {**summary_out(t), "context": t.context,
            "progress": {"step": t.step, "message": t.message, "percent": t.percent},
            "error": t.error, "where": t.where, "media_url": f"/api/tests/{t.id}/media",
            "duration": 0, "width": 0, "height": 0, "grid": [48, 27], "frames": [], "transcript": [],
-           "personas": [], "gaze": [], "summary": None}
-    f = db.test_dir(t.id) / "result.json"
-    if t.status == "done" and f.exists():
-        r = json.loads(f.read_text())
+           "personas": [], "gaze": [], "summary": None, "themes": None}
+    if t.status == "done":
+        r = _result(t)
         a = r["analysis"]
         out.update(duration=a.get("duration", 0), width=a.get("width", 0), height=a.get("height", 0),
                    grid=a.get("grid", [48, 27]), frames=[{"t": x["t"], "heat": x["heat"]} for x in a["frames"]],
                    transcript=a.get("transcript", []), personas=[persona_out(p) for p in r["personas"]],
                    gaze=[{**g, "thought_en": g.get("thought_en", "")} for g in r["gaze"]], summary=r["summary"],
                    themes=r.get("themes"))
+    elif t.status in ("queued", "running"):
+        try:  # the panel is known from the start, so the progress view can show who is watching
+            out["personas"] = [persona_out(p) for p in json.loads((db.test_dir(t.id) / "personas.json").read_text())]
+        except (FileNotFoundError, ValueError):
+            pass
     return out
 
 
@@ -220,38 +383,26 @@ def delete_test(test_id: str, user: User = auth.CurrentUser):
     with db.session() as s:
         s.delete(s.get(Test, t.id))
         s.commit()
-    shutil.rmtree(db.test_dir(t.id), ignore_errors=True)
-    blobstore.delete_prefix(db.DATA / "tests" / t.id)
+    db.test_dir(t.id).rmtree()
 
 
 @app.get("/api/tests/{test_id}/media")
 def media(test_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
-    f = db.test_dir(t.id) / "media.bin"
-    if not blobstore.ensure_local(f):
+    if t.status != "done":
         raise HTTPException(404, "Media is not ready yet.")
-    return FileResponse(f, media_type=t.mime)
+    return _redirect(db.test_dir(t.id) / "media.bin", expires=6 * 3600)
 
 
 @app.get("/api/tests/{test_id}/thumb.jpg")
 def thumb(test_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
-    f = db.test_dir(t.id) / "thumb.jpg"
-    if not f.exists():
-        raise HTTPException(404, "No thumbnail yet.")
-    return FileResponse(f, media_type="image/jpeg")
+    return _redirect(db.test_dir(t.id) / "thumb.jpg", expires=24 * 3600)
 
 
-# ---------------- interviews ----------------
+# ---------------- interviews (v1, kept for old clients) ----------------
 class AskIn(BaseModel):
     message: str
-
-
-def _result(t: Test) -> dict:
-    f = db.test_dir(t.id) / "result.json"
-    if t.status != "done" or not f.exists():
-        raise HTTPException(409, "The test has not finished yet.")
-    return json.loads(f.read_text())
 
 
 def _history_file(t: Test, pid: str) -> Path:
@@ -313,8 +464,11 @@ def rename_test(test_id: str, body: RenameIn, user: User = auth.CurrentUser):
 async def preview_csv(age_min: int = Form(20), age_max: int = Form(45), genders: str = Form("F,M"),
                       count: int = Form(20), people_csv: UploadFile | None = File(None),
                       user: User = auth.CurrentUser):
-    csv_bytes = await people_csv.read() if people_csv else None
-    return {"personas": [persona_out(p) for p in build_panel(age_min, age_max, genders, count, csv_bytes)]}
+    if people_csv is None:
+        ps, matched = bank_panel(age_min, age_max, genders, count)
+        return {"personas": [persona_out(p) for p in ps], "matched": matched}
+    ps = csv_panel(await people_csv.read(), age_min, age_max, genders, count)
+    return {"personas": [persona_out(p) for p in ps], "matched": len(ps)}
 
 
 class NewTalkIn(BaseModel):
@@ -401,7 +555,6 @@ def delete_talk(test_id: str, talk_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
     f = _talk_file(t, talk_id)
     f.unlink()
-    blobstore.delete_prefix(f)
 
 
 @app.post("/api/tests/{test_id}/talks/{talk_id}/ask")
@@ -500,9 +653,9 @@ def get_library_persona(pid: str, user: User = auth.CurrentUser):
 
 
 def _global_persona(pid: str, user: User) -> dict:
-    """lib_* -> library persona; '<test_id>:<persona_id>' -> a viewer of one of the user's tests."""
-    if pid.startswith("lib_"):
-        p = library.all_personas().get(pid)
+    """lib_*/bank_* -> library or bank persona; '<test_id>:<persona_id>' -> a viewer of one of the user's tests."""
+    if pid.startswith(("lib_", "bank_")):
+        p = _persona_by_source(pid)
     elif ":" in pid:
         test_id, local = pid.split(":", 1)
         r = _result(own_test(test_id, user))
@@ -525,38 +678,28 @@ def get_deep(pid: str, user: User = auth.CurrentUser):
     return {"status": status, "markdown": md}
 
 
-@app.post("/api/personas/{pid}/deep", status_code=202)
+@app.post("/api/personas/{pid}/deep")
 def make_deep(pid: str, user: User = auth.CurrentUser):
+    """Writes the long profile inside the request (serverless: no background work) and returns it."""
     p = _global_persona(pid, user)
-    if persona_profile.deep_status(p) == "none":
-        email = user.email
-
-        def run():
-            llm.current_user.set(email)
-            try:
-                persona_profile.generate_deep(p)
-            except Exception as e:  # noqa: BLE001
-                logging.getLogger("adlens").warning("deep profile %s failed: %s", pid, e)
-        threading.Thread(target=run, daemon=True).start()
-    return {"status": "generating" if persona_profile.deep_status(p) != "ready" else "ready"}
+    if persona_profile.deep_status(p) != "ready":
+        llm.current_user.set(user.email)
+        try:
+            persona_profile.generate_deep(p)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"The full profile could not be written: {str(e)[:120]}") from None
+    return get_deep(pid, user)
 
 
-@app.post("/api/tests/{test_id}/themes", status_code=202)
+@app.post("/api/tests/{test_id}/themes")
 def recompute_themes(test_id: str, lang: str = "ja", user: User = auth.CurrentUser):
     t = own_test(test_id, user)
     r = _result(t)
-    f = db.test_dir(t.id) / "result.json"
-    email = user.email
-
-    def run():
-        llm.current_user.set(email)
-        try:
-            r["themes"] = themes_mod.summarize(r["gaze"], r["personas"], "en" if lang == "en" else "ja")
-            f.write_text(json.dumps(r, ensure_ascii=False))
-        except Exception as e:  # noqa: BLE001
-            logging.getLogger("adlens").warning("themes %s failed: %s", test_id, e)
-    threading.Thread(target=run, daemon=True).start()
-    return {"status": "generating"}
+    llm.current_user.set(user.email)
+    r["themes"] = themes_mod.summarize(r["gaze"], r["personas"], "en" if lang == "en" else "ja")
+    (db.test_dir(t.id) / "result.json").write_text(json.dumps(r, ensure_ascii=False))
+    store.cached_json.cache_clear()
+    return {"status": "ready", "themes": r["themes"]}
 
 
 class EstimateIn(BaseModel):

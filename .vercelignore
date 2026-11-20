@@ -1,0 +1,8 @@
+frontend
+samples
+data
+cache
+reports
+.venv
+**/__pycache__
+*.pdf

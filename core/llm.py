@@ -26,9 +26,9 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.00, 10.00), "claude-opus-5-5": (4.00, 20.00)}
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = Path(os.getenv("ADLENS_DATA", ROOT / "data"))
-CACHE_DIR = ROOT / "cache" / "llm"
-USAGE_LOG = DATA / "usage.jsonl"
+DATA = Path(os.getenv("ADLENS_DATA") or ("/tmp/adlens-data" if os.getenv("VERCEL") else ROOT / "data"))
+CACHE_DIR = Path("/tmp/adlens-llm-cache") if os.getenv("VERCEL") else ROOT / "cache" / "llm"
+TOTALS = {"usd": 0.0, "calls": 0, "in": 0, "out": 0}  # per-process totals (the worker reports these back)
 
 current_user: contextvars.ContextVar[str] = contextvars.ContextVar("adlens_user", default="system")
 current_tag: contextvars.ContextVar[str] = contextvars.ContextVar("adlens_tag", default="")
@@ -86,13 +86,26 @@ def cost_usd(model, usage) -> float:
 
 
 def _record(model, usage, usd, tag):
-    entry = {"at": datetime.now(timezone.utc).isoformat(), "user": current_user.get(), "tag": tag or current_tag.get(),
-             "model": model, "in": getattr(usage, "input_tokens", 0), "out": getattr(usage, "output_tokens", 0),
-             "usd": usd}
+    tin, tout = getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0
     with _log_lock:
-        USAGE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with USAGE_LOG.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
+        TOTALS["usd"] += usd
+        TOTALS["calls"] += 1
+        TOTALS["in"] += tin
+        TOTALS["out"] += tout
+    record_usage(current_user.get(), tag or current_tag.get(), model, tin, tout, usd)
+
+
+def record_usage(user, tag, model, tin, tout, usd):
+    """Usage rows live in Postgres; workers (no database) skip this and report TOTALS instead."""
+    if not os.getenv("DATABASE_URL"):
+        return
+    try:
+        from backend import db
+        with db.session() as s:
+            s.add(db.Usage(user=user, tag=tag, model=model, tokens_in=tin, tokens_out=tout, usd=usd))
+            s.commit()
+    except Exception:  # noqa: BLE001 - never fail a model call because of bookkeeping
+        pass
 
 
 def text_of(msg) -> str:
@@ -153,18 +166,16 @@ def bind(fn):
 
 
 def month_usage(user: str) -> dict:
-    """Spend this calendar month for one user, from the usage log."""
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    usd, n = 0.0, {"test": 0, "talk": 0}
-    if USAGE_LOG.exists():
-        for line in USAGE_LOG.open():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("user") == user and e.get("at", "").startswith(month):
-                usd += e.get("usd", 0)
-                for k in n:
-                    if e.get("tag", "").startswith(k):
-                        n[k] += 1
-    return {"month_usd": round(usd, 4), "calls": n}
+    """Spend this calendar month for one user."""
+    from sqlalchemy import func
+    from sqlmodel import select
+
+    from backend import db
+    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    with db.session() as s:
+        rows = s.exec(select(db.Usage.tag, func.count(), func.coalesce(func.sum(db.Usage.usd), 0.0))
+                      .where(db.Usage.user == user, db.Usage.at >= start).group_by(db.Usage.tag)).all()
+    usd = sum(r[2] for r in rows)
+    calls = {"test": sum(r[1] for r in rows if r[0].startswith("test")),
+             "talk": sum(r[1] for r in rows if r[0].startswith("talk"))}
+    return {"month_usd": round(float(usd), 4), "calls": calls}
