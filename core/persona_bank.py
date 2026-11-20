@@ -549,6 +549,7 @@ _lock = threading.Lock()
 def invalidate():
     with _lock:
         _idx.update(rows=None, t=0.0, facets=None)
+        _rows.clear()
 
 
 def _index():
@@ -563,6 +564,7 @@ def _index():
     rows = [tuple(r) for r in rows]
     with _lock:
         _idx.update(rows=rows, t=time.time(), facets=None)
+        _rows.clear()   # a refresh may mean rows were rebuilt
     return rows
 
 
@@ -580,13 +582,18 @@ def _to_persona(row: PersonaBank, color: str | None = None) -> dict:
     }
 
 
+_rows: dict[str, PersonaBank] = {}   # id -> detached row; bounded by the bank size, cleared with the index
+
+
 def _fetch(ids: list[str]) -> dict[str, PersonaBank]:
-    if not ids:
-        return {}
-    from backend.db import session
-    with session() as s:
-        rows = s.exec(select(PersonaBank).where(PersonaBank.id.in_(ids))).all()
-    return {r.id: r for r in rows}
+    """Full rows (with the big JSON) for the chosen ids: one `IN` query for whatever is not cached yet."""
+    need = [i for i in dict.fromkeys(ids) if i not in _rows]
+    if need:
+        from backend.db import session
+        with session() as s:
+            for r in s.exec(select(PersonaBank).where(PersonaBank.id.in_(need))).all():
+                _rows[r.id] = r
+    return {i: _rows[i] for i in ids if i in _rows}
 
 
 def _norm_regions(regions):

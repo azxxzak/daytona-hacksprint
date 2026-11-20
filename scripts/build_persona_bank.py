@@ -22,7 +22,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import anthropic  # noqa: E402
-from sqlmodel import delete, func, select  # noqa: E402
+from sqlmodel import delete, func, select, update  # noqa: E402
 
 from backend.db import engine, session  # noqa: E402
 from core import persona_bank as pb  # noqa: E402
@@ -64,14 +64,17 @@ def submit(job_ids: list[str], attempt: int):
     reqs = [{"custom_id": j.id, "params": {"model": MODEL, "max_tokens": MAX_TOKENS, "system": system,
                                            "messages": [{"role": "user", "content": pb.build_user(j.seed)}]}} for j in jobs]
     batch = client.messages.batches.create(requests=reqs)
-    with session() as s:
-        s.add(PersonaBankBatch(batch_id=batch.id, attempt=attempt, size=len(jobs)))
-        for j in jobs:
-            j = s.get(PersonaBankJob, j.id)
-            j.status, j.batch_id, j.attempt, j.updated_at = "submitted", batch.id, attempt, now()
-            s.add(j)
-        s.commit()
+    register(batch.id, attempt, [j.id for j in jobs])
     print(f"submitted batch {batch.id}: {len(jobs)} requests (attempt {attempt})")
+
+
+def register(batch_id: str, attempt: int, ids: list[str]):
+    """One transaction, bulk statements (the DB link is ~0.8s per round-trip, so no per-row loops)."""
+    with session() as s:
+        s.add(PersonaBankBatch(batch_id=batch_id, attempt=attempt, size=len(ids)))
+        s.exec(update(PersonaBankJob).where(PersonaBankJob.id.in_(ids)).values(
+            status="submitted", batch_id=batch_id, attempt=attempt, updated_at=now()))
+        s.commit()
 
 
 def collect(batch_id: str, poll: int):
@@ -85,20 +88,22 @@ def collect(batch_id: str, poll: int):
         time.sleep(poll)
     ok = bad = 0
     tin = tout = 0
+    results = list(client.messages.batches.results(batch_id))
     with session() as s:
-        for r in client.messages.batches.results(batch_id):
-            job = s.get(PersonaBankJob, r.custom_id)
+        jobs = {j.id: j for j in s.exec(select(PersonaBankJob).where(PersonaBankJob.id.in_([r.custom_id for r in results]))).all()}
+        rows, upd = [], []
+        for r in results:
+            job = jobs.get(r.custom_id)
             if job is None or job.status == "done":
                 continue
-            err, prof = None, None
+            err, prof, di, do = None, None, 0, 0
             if r.result.type != "succeeded":
                 err = f"batch result {r.result.type}"
             else:
                 m = r.result.message
-                job.input_tokens += m.usage.input_tokens
-                job.output_tokens += m.usage.output_tokens
-                tin += m.usage.input_tokens
-                tout += m.usage.output_tokens
+                di, do = m.usage.input_tokens, m.usage.output_tokens
+                tin += di
+                tout += do
                 text = "".join(c.text for c in m.content if c.type == "text")
                 if m.stop_reason == "max_tokens":
                     err = "max_tokens before JSON finished"
@@ -108,22 +113,24 @@ def collect(batch_id: str, poll: int):
                         err = pb.validate_profile(prof, job.seed)
                     except ValueError as e:
                         err = f"parse: {str(e)[:150]}"
-            job.updated_at = now()
+            upd.append({"id": job.id, "status": "failed" if err else "done", "error": err, "updated_at": now(),
+                        "input_tokens": job.input_tokens + di, "output_tokens": job.output_tokens + do})
             if err:
-                job.status, job.error = "failed", err
                 bad += 1
             else:
                 sd = job.seed
-                s.merge(PersonaBank(id=job.id, age=sd["age"], gender=sd["gender"], region=sd["region"],
-                                    area_type=sd["area_type"], occupation=sd["occupation"], employment=sd["employment"],
-                                    marital=sd["marital"], household=sd["household"], income=sd["income"],
-                                    segment_tags=sd["segment_tags"], profile=prof, seed=sd))
-                job.status, job.error = "done", None
+                rows.append(PersonaBank(id=job.id, age=sd["age"], gender=sd["gender"], region=sd["region"],
+                                        area_type=sd["area_type"], occupation=sd["occupation"], employment=sd["employment"],
+                                        marital=sd["marital"], household=sd["household"], income=sd["income"],
+                                        segment_tags=sd["segment_tags"], profile=prof, seed=sd))
                 ok += 1
-            s.add(job)
-        bt = s.get(PersonaBankBatch, batch_id)
-        bt.collected_at, bt.input_tokens, bt.output_tokens = now(), tin, tout
-        s.add(bt)
+        if rows:
+            s.exec(delete(PersonaBank).where(PersonaBank.id.in_([r.id for r in rows])))   # idempotent re-collect
+            s.add_all(rows)
+        if upd:
+            s.execute(update(PersonaBankJob), upd)   # ORM bulk update by primary key
+        s.exec(update(PersonaBankBatch).where(PersonaBankBatch.batch_id == batch_id).values(
+            collected_at=now(), input_tokens=tin, output_tokens=tout))
         s.commit()
     print(f"  collected {batch_id}: {ok} valid, {bad} failed validation/errored")
 
@@ -180,6 +187,7 @@ if __name__ == "__main__":
     ap.add_argument("--n", type=int, default=pb.BANK_SIZE)
     ap.add_argument("--poll", type=int, default=30)
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--adopt", help="register an already-created batch id (e.g. after a crash between create and commit)")
     ap.add_argument("--reset-profiles", action="store_true", help="delete built rows + reset jobs to pending (seeds kept)")
     a = ap.parse_args()
     pb.init_tables()
@@ -194,6 +202,9 @@ if __name__ == "__main__":
                 s.add(j)
             s.commit()
         print("reset done")
+    elif a.adopt:
+        register(a.adopt, 1, [])
+        print("adopted; run the build again to collect it")
     elif a.status:
         status(a.n)
     else:
