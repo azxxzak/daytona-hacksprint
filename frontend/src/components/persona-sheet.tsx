@@ -173,7 +173,7 @@ type Deep = { markdown: string | null; status: "none" | "generating" | "ready" }
 export function PersonaSheet({
   persona, pid, onClose, actionLabel, onAction, children,
 }: {
-  persona: Persona | null; pid: string | null; onClose: () => void; actionLabel: string; onAction: (p: Persona) => void; children?: ReactNode;
+  persona: Persona | null; pid: string | null; onClose: () => void; actionLabel?: string; onAction?: (p: Persona) => void; children?: ReactNode;
 }) {
   const { t } = useI18n();
   const toast = useToast();
@@ -242,7 +242,7 @@ export function PersonaSheet({
               </div>
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Button className="flex-1" onClick={() => onAction(persona)}><MessageCircle size={16} aria-hidden /> {actionLabel}</Button>
+              {actionLabel && onAction && <Button className="flex-1" onClick={() => onAction(persona)}><MessageCircle size={16} aria-hidden /> {actionLabel}</Button>}
               {p && (
                 shown?.status === "ready" && shown.markdown ? (
                   <Button variant="outline" className="flex-1" onClick={() => setView("deep")}><FileText size={16} aria-hidden /> {t("pf.deepTitle")}</Button>

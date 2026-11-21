@@ -18,14 +18,13 @@ REALISM = """Realism rules (important):
 EVIDENCE = """Also say what each reaction rests on:
 - "basis": "profile" if it follows a stated fact in their profile, "inferred" if it is a reasonable guess from it,
   "invented" if nothing in the profile supports it.
-- "because": at most 60 characters (Japanese) naming that fact or reason."""
+- "because": at most 60 characters ({language}) naming that fact or reason."""
 
 PROMPT = """You simulate a consumer research panel watching an advertisement.
 This is the frame at t={t:.1f}s{context}.
 {speech}
 For EACH persona below, predict realistically where their eyes land first in this frame,
-how interested they are, and a short inner thought IN JAPANESE (as that person would think it),
-plus a natural English translation of that thought.
+how interested they are, and {thought_rule}
 Different people notice different things (price, faces, product, text, logo, background).
 If speech is given, react to the actual words too (a catchphrase, a claim, a price, an awkward line).
 
@@ -38,8 +37,8 @@ Personas:
 
 Return ONLY a JSON array, one object per persona, in this exact shape:
 [{{"id": "P001", "x": 0.0-1.0, "y": 0.0-1.0, "looking_at": "short English label",
-   "interest": 1-5, "thought": "日本語の短い心の声", "thought_en": "the same thought in English",
-   "basis": "profile|inferred|invented", "because": "根拠"}}]
+   "interest": 1-5, {thought_shape},
+   "basis": "profile|inferred|invented", "because": "{because_hint}"}}]
 x,y are normalized image coordinates (0,0 = top-left)."""
 
 
@@ -60,7 +59,21 @@ def transcript_text(transcript):
     return "\n".join(f"[{s['start']:.0f}-{s['end']:.0f}s] {s['text'].strip()}" for s in transcript or [])
 
 
-def _ask(keyframe, personas, context, speech=""):
+LANG_PARTS = {
+    "ja": dict(language="Japanese",
+               thought_rule="a short inner thought IN JAPANESE (as that person would think it),\nplus a natural English translation of that thought.",
+               thought_shape='"thought": "日本語の短い心の声", "thought_en": "the same thought in English"',
+               because_hint="根拠"),
+    "en": dict(language="English",
+               thought_rule="a short inner thought IN ENGLISH, in that person's own casual voice (they live in Japan;\n"
+                            "quote Japanese on-screen text or speech in English, with the original in quotes if useful).",
+               thought_shape='"thought": "short inner thought in English"',
+               because_hint="reason, in English"),
+}
+
+
+def _ask(keyframe, personas, context, speech="", lang="ja"):
+    parts = LANG_PARTS["en" if lang == "en" else "ja"]
     lines = "\n".join(f"- {describe(p)}" for p in personas)
     text, _ = llm.call(
         model=FAST_MODEL, max_tokens=8000, cache=True, tag="test-gaze",
@@ -68,7 +81,9 @@ def _ask(keyframe, personas, context, speech=""):
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                          "data": keyframe["jpg_b64"]}},
             {"type": "text", "text": PROMPT.format(
-                t=keyframe["t"], context=context, personas=lines, realism=REALISM, evidence=EVIDENCE,
+                t=keyframe["t"], context=context, personas=lines, realism=REALISM,
+                evidence=EVIDENCE.format(language=parts["language"]), thought_rule=parts["thought_rule"],
+                thought_shape=parts["thought_shape"], because_hint=parts["because_hint"],
                 speech=f'Audio heard around this moment: "{speech}"\n' if speech else "")},
         ]}],
     )
@@ -78,7 +93,8 @@ def _ask(keyframe, personas, context, speech=""):
             out.append({"id": str(g["id"]), "t": keyframe["t"],
                         "x": min(max(float(g["x"]), 0), 1), "y": min(max(float(g["y"]), 0), 1),
                         "looking_at": g.get("looking_at", ""), "interest": int(g.get("interest", 3)),
-                        "thought": g.get("thought", ""), "thought_en": g.get("thought_en", ""),
+                        "thought": g.get("thought", ""),
+                        "thought_en": g.get("thought", "") if lang == "en" else g.get("thought_en", ""),
                         "basis": g.get("basis") if g.get("basis") in ("profile", "inferred", "invented") else None,
                         "because": str(g.get("because") or "")[:120]})
         except (KeyError, ValueError, TypeError):
@@ -86,7 +102,7 @@ def _ask(keyframe, personas, context, speech=""):
     return out
 
 
-def persona_gaze(keyframes, personas, ad_context="", log=print, transcript=None):
+def persona_gaze(keyframes, personas, ad_context="", log=print, transcript=None, lang="ja"):
     """Returns a flat list of gaze points for every (keyframe, persona)."""
     context = f" (ad context: {ad_context})" if ad_context else ""
     ts = [kf["t"] for kf in keyframes]
@@ -97,14 +113,14 @@ def persona_gaze(keyframes, personas, ad_context="", log=print, transcript=None)
     log(f"Asking {FAST_MODEL}: {len(jobs)} requests ({len(keyframes)} keyframes × {len(personas)} personas)")
     results = []
     with ThreadPoolExecutor(max_workers=12) as pool:  # the shared limiter decides real concurrency
-        for chunk in pool.map(llm.bind(lambda j: _safe(j, context, log)), jobs):
+        for chunk in pool.map(llm.bind(lambda j: _safe(j, context, log, lang)), jobs):
             results.extend(chunk)
     return results
 
 
-def _safe(job, context, log):
+def _safe(job, context, log, lang="ja"):
     try:
-        return _ask(job[0], job[1], context, job[2])
+        return _ask(job[0], job[1], context, job[2], lang)
     except Exception as e:  # noqa: BLE001
         log(f"gaze request failed at t={job[0]['t']}: {e}")
         return []

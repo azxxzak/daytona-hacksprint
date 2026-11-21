@@ -68,11 +68,11 @@ def main(job_path):
         personas = job["personas"]
         if any(not p.get("profile") for p in personas):
             progress("viewers", 45, "Writing profiles for the viewers")
-            ensure_profiles(personas)
+            ensure_profiles(personas, lang=job.get("lang", "ja"))
 
         progress("viewers", 55, f"{len(personas)} viewers are watching {len(analysis['keyframes'])} moments")
         gaze = persona_gaze(analysis["keyframes"], personas, job.get("context", ""),
-                            log=lambda m: None, transcript=analysis.get("transcript"))
+                            log=lambda m: None, transcript=analysis.get("transcript"), lang=job.get("lang", "ja"))
 
         progress("saving", 88, "Grouping reactions into themes")
         summary = summarize(gaze)

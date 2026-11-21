@@ -43,7 +43,7 @@ function ProfileSheet({ test, persona, onClose, onTalk }: { test: Test; persona:
                   <span>{test.media_kind === "video" ? fmtTime(g.t) : ""} {g.looking_at && `· ${g.looking_at}`}</span>
                   <span className="text-ink">{g.interest} / 5</span>
                 </p>
-                <p className="mt-1 leading-snug">{thoughtOf(g, lang)}</p>
+                <p className="mt-1 leading-snug">{thoughtOf(g, test.lang ?? lang)}</p>
                 <EvidenceLabel basis={g.basis} because={g.because} className="mt-1" />
               </li>
             ))}

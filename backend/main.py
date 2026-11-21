@@ -22,6 +22,7 @@ from sqlmodel import select  # noqa: E402
 from backend import auth, db, worker_ctl  # noqa: E402
 from backend.db import Test, User  # noqa: E402
 from core import avatars, library, llm, persona_profile, store, themes as themes_mod  # noqa: E402
+from core import localize  # noqa: E402
 from core import talk as talk_mod  # noqa: E402
 from core.gaze import chat_with_persona  # noqa: E402
 from core.personas import load_csv, sample_personas, with_colors  # noqa: E402
@@ -35,6 +36,18 @@ except Exception:  # noqa: BLE001
 logging.basicConfig(level=logging.INFO)
 db.init()
 app = FastAPI(title="AdLens API", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+
+@app.middleware("http")
+async def ui_language(request: Request, call_next):
+    """The UI language (X-Lang header, else the adlens_lang cookie) for browsing data: panel previews, facets,
+    library, persona sheets. A test's own outputs always use the language the test was started in."""
+    raw = (request.headers.get("x-lang") or request.cookies.get("adlens_lang") or "ja").lower()
+    token = localize.LANG.set("en" if raw.startswith("en") else "ja")
+    try:
+        return await call_next(request)
+    finally:
+        localize.LANG.reset(token)
 
 MAX_UPLOAD = 500 * 1024 * 1024
 MEDIA_TYPES = {".mp4": ("video", "video/mp4"), ".mov": ("video", "video/quicktime"), ".webm": ("video", "video/webm"),
@@ -118,7 +131,7 @@ def summary_out(t: Test) -> dict:
     return {"id": t.id, "name": t.name, "created_at": t.created_at.isoformat(), "status": t.status,
             "viewers": t.viewers, "media_kind": t.media_kind,
             "thumb_url": f"/api/tests/{t.id}/thumb.jpg" if t.status == "done" else None,
-            "engaged": t.engaged, "avg_interest": t.avg_interest}
+            "engaged": t.engaged, "avg_interest": t.avg_interest, "lang": t.lang or "ja"}
 
 
 def _owner_tag(user: User) -> str:
@@ -171,7 +184,7 @@ def me(user: User = auth.CurrentUser):
 def preview(age_min: int = 20, age_max: int = 45, genders: str = "F,M", count: int = 20,
             regions: str = "", occupations: str = "", seed: int | None = None, user: User = auth.CurrentUser):
     ps, matched = bank_panel(age_min, age_max, genders, count, _csv_list(regions), _csv_list(occupations), seed)
-    return {"personas": [persona_out(p) for p in ps], "matched": matched}
+    return {"personas": [persona_out(p) for p in localize.personas(ps)], "matched": matched}
 
 
 def _csv_list(s: str) -> list[str]:
@@ -182,7 +195,9 @@ def _csv_list(s: str) -> list[str]:
 def facets(user: User = auth.CurrentUser):
     if persona_bank is None:
         return {"total": 0, "regions": [], "occupations": [], "age_bands": []}
-    return persona_bank.facets()
+    f = persona_bank.facets()
+    return {**f, **{kind: [{**x, "label": localize.label(kind[:-1], x["name"])} for x in f[kind]]
+                    for kind in ("regions", "occupations")}}
 
 
 def _persona_by_source(pid: str) -> dict | None:
@@ -306,20 +321,27 @@ def create_test(body: NewTestIn, user: User = auth.CurrentUser):
         raise HTTPException(400, "Upload an MP4, MOV, WEBM, PNG or JPG file.")
     if not SPath(media_key).exists():
         raise HTTPException(400, "The upload did not finish. Upload the file again.")
+    lang = "en" if body.lang == "en" else "ja"
     personas = _panel_from(body, user)
     register_portraits(personas)
+    token = localize.LANG.set(lang)  # the panel is written in the test's language (bank: stored English profiles)
+    try:
+        llm.current_user.set(user.email)
+        personas = localize.personas(personas)
+    finally:
+        localize.LANG.reset(token)
     kind, mime = MEDIA_TYPES[ext]
     test_id = uuid.uuid4().hex[:12]
     (db.test_dir(test_id) / "personas.json").write_text(json.dumps(personas, ensure_ascii=False, default=str))
     with db.session() as s:
         t = Test(id=test_id, owner=user.email, name=(body.name.strip() or "Untitled test")[:120],
                  context=body.context[:500], media_kind=kind, mime=mime, viewers=len(personas),
-                 message="Waiting to start")
+                 message="Waiting to start", lang=lang)
         s.add(t)
         s.commit()
         s.refresh(t)
     try:
-        worker_ctl.start(t, personas, media_key, body.upload_id, mime, body.lang)
+        worker_ctl.start(t, personas, media_key, body.upload_id, mime, lang)
     except Exception as e:  # noqa: BLE001
         logging.getLogger("adlens").exception("worker start failed")
         with db.session() as s:
@@ -638,9 +660,12 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
 def get_library(user: User = auth.CurrentUser):
     ps = library.all_personas()
     groups = []
+    loc = dict(zip(ps, localize.personas(list(ps.values()))))
     for gid, name, name_en, desc, _ in library.GROUPS:
-        members = [persona_out(p) for p in ps.values() if p["group"] == gid]
-        groups.append({"id": gid, "name": name, "name_en": name_en, "description": desc, "personas": members})
+        members = [persona_out(loc[k]) for k, p in ps.items() if p["group"] == gid]
+        parts = [x.strip() for x in desc.split(" / ")]
+        groups.append({"id": gid, "name": name, "name_en": name_en,
+                       "description": parts[-1] if localize.is_en() else parts[0], "personas": members})
     return {"groups": groups}
 
 
@@ -649,16 +674,23 @@ def get_library_persona(pid: str, user: User = auth.CurrentUser):
     p = library.all_personas().get(pid)
     if not p:
         raise HTTPException(404, "Persona not found.")
-    return persona_out(p)
+    return persona_out(localize.persona(p))
 
 
-def _global_persona(pid: str, user: User) -> dict:
-    """lib_*/bank_* -> library or bank persona; '<test_id>:<persona_id>' -> a viewer of one of the user's tests."""
+def _global_persona(pid: str, user: User) -> tuple[dict, str]:
+    """lib_*/bank_* -> library or bank persona (in the UI language); '<test_id>:<persona_id>' -> a viewer of one of
+    the user's tests (in that test's language). Returns (persona, language)."""
+    lang = localize.lang()
     if pid.startswith(("lib_", "bank_")):
         p = _persona_by_source(pid)
+        if p:
+            llm.current_user.set(user.email)
+            p = localize.persona(p)
     elif ":" in pid:
         test_id, local = pid.split(":", 1)
-        r = _result(own_test(test_id, user))
+        t = own_test(test_id, user)
+        lang = t.lang or "ja"
+        r = _result(t)
         p = next((x for x in r["personas"] if x["id"] == local), None)
     else:
         p = None
@@ -666,37 +698,37 @@ def _global_persona(pid: str, user: User) -> dict:
         raise HTTPException(404, "Persona not found.")
     if not p.get("profile"):
         llm.current_user.set(user.email)
-        persona_profile.ensure_profiles([p])
-    return p
+        persona_profile.ensure_profiles([p], lang=lang)
+    return p, lang
 
 
 @app.get("/api/personas/{pid}/deep")
 def get_deep(pid: str, user: User = auth.CurrentUser):
-    p = _global_persona(pid, user)
-    status = persona_profile.deep_status(p)
-    md = persona_profile.deep_path(p).read_text() if status == "ready" else None
+    p, lang = _global_persona(pid, user)
+    status = persona_profile.deep_status(p, lang)
+    md = persona_profile.deep_path(p, lang).read_text() if status == "ready" else None
     return {"status": status, "markdown": md}
 
 
 @app.post("/api/personas/{pid}/deep")
 def make_deep(pid: str, user: User = auth.CurrentUser):
     """Writes the long profile inside the request (serverless: no background work) and returns it."""
-    p = _global_persona(pid, user)
-    if persona_profile.deep_status(p) != "ready":
+    p, lang = _global_persona(pid, user)
+    if persona_profile.deep_status(p, lang) != "ready":
         llm.current_user.set(user.email)
         try:
-            persona_profile.generate_deep(p)
+            persona_profile.generate_deep(p, lang)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"The full profile could not be written: {str(e)[:120]}") from None
     return get_deep(pid, user)
 
 
 @app.post("/api/tests/{test_id}/themes")
-def recompute_themes(test_id: str, lang: str = "ja", user: User = auth.CurrentUser):
+def recompute_themes(test_id: str, user: User = auth.CurrentUser):
     t = own_test(test_id, user)
     r = _result(t)
     llm.current_user.set(user.email)
-    r["themes"] = themes_mod.summarize(r["gaze"], r["personas"], "en" if lang == "en" else "ja")
+    r["themes"] = themes_mod.summarize(r["gaze"], r["personas"], t.lang or "ja")
     (db.test_dir(t.id) / "result.json").write_text(json.dumps(r, ensure_ascii=False))
     store.cached_json.cache_clear()
     return {"status": "ready", "themes": r["themes"]}

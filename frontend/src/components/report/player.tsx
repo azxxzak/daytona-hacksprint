@@ -377,7 +377,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
                 <div className="min-w-0 flex-1 text-[13px]">
                   <p className="truncate"><b>{p.name}</b> <span className="text-mute">{p.age}, {p.occupation}</span></p>
                   <p className="truncate text-xs text-mute">{t("pl.looking")}: {g.looking_at}</p>
-                  <p className="mt-1 leading-snug">{thoughtOf(g, lang)}</p>
+                  <p className="mt-1 leading-snug">{thoughtOf(g, test.lang ?? lang)}</p>
                   <EvidenceLabel basis={g.basis} because={g.because} className="mt-1" />
                   <div className="mt-2 h-[3px] rounded bg-line" role="img" aria-label={`${g.interest} / 5`}>
                     <div className="h-full rounded bg-ink" style={{ width: `${g.interest * 20}%` }} />

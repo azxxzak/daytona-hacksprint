@@ -81,6 +81,7 @@ class Test(SQLModel, table=True):
     worker_id: str | None = None              # Daytona sandbox running this test
     worker_checked_at: float = 0.0            # last time a poll looked at the worker (throttle)
     started_at: float = 0.0
+    lang: str = "ja"                          # language of every output of this test (UI language at start)
 
 
 class Usage(SQLModel, table=True):
@@ -95,7 +96,9 @@ class Usage(SQLModel, table=True):
 
 
 _NEW_COLUMNS = {  # columns added after the first deploy; create_all() does not alter existing tables
-    "test": [("worker_id", "VARCHAR"), ("worker_checked_at", "FLOAT DEFAULT 0"), ("started_at", "FLOAT DEFAULT 0")],
+    "test": [("worker_id", "VARCHAR"), ("worker_checked_at", "FLOAT DEFAULT 0"), ("started_at", "FLOAT DEFAULT 0"),
+             ("lang", "VARCHAR DEFAULT 'ja'")],
+    "persona_bank": [("profile_en", "JSON")],
 }
 _inited = False
 
@@ -106,9 +109,12 @@ def init():
         return
     SQLModel.metadata.create_all(engine)
     if engine.dialect.name == "postgresql":
-        from sqlalchemy import text
+        from sqlalchemy import inspect as sqlalchemy_inspect, text
         with engine.begin() as c:
+            have = set(sqlalchemy_inspect(engine).get_table_names())
             for table, cols in _NEW_COLUMNS.items():
+                if table not in have:
+                    continue
                 for name, typ in cols:
                     c.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS {name} {typ}'))
     _inited = True

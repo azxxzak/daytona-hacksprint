@@ -86,6 +86,8 @@ export type TestSummary = {
   thumb_url: string | null;
   engaged: number | null;
   avg_interest: number | null;
+  /** language every output of this test is written in (the UI language when it was started) */
+  lang?: "ja" | "en";
 };
 
 export type Summary = {

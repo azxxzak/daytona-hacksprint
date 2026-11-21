@@ -55,6 +55,7 @@ class PersonaBank(SQLModel, table=True):
     segment_tags: list = Field(default_factory=list, sa_column=Column(JSON))
     profile: dict = Field(default_factory=dict, sa_column=Column(JSON))   # tier-1 profile (persona_profile.SCHEMA)
     seed: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    profile_en: dict | None = Field(default=None, sa_column=Column(JSON))  # English profile (core.localize)
     created_at: datetime = Field(default_factory=_now)
 
 

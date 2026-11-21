@@ -20,6 +20,12 @@ function detailOf(body: unknown, fallback: string): string {
   return fallback;
 }
 
+/** The UI language goes with every call: browsing data (panels, facets, library) is returned in it. */
+function uiLang(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  return { "X-Lang": document.documentElement.lang === "en" ? "en" : "ja" };
+}
+
 function toLogin() {
   if (typeof window !== "undefined" && window.location.pathname !== "/login") {
     window.location.replace("/login");
@@ -37,7 +43,7 @@ export async function api<T>(
     res = await fetch(path, {
       ...rest,
       credentials: "same-origin",
-      headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
+      headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...uiLang(), ...headers },
       body: form ?? (json !== undefined ? JSON.stringify(json) : undefined),
     });
   } catch (e) {

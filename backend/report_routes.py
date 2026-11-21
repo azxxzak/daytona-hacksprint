@@ -62,7 +62,7 @@ def _work(test_id: str, d: Path, test: Test, body: ReportIn, started: float):
     from core.decision_report import generate
     try:
         result = json.loads((d / "result.json").read_text(encoding="utf-8"))
-        rep = generate(result, test.name, test.context or "", body.decision_question or "", body.lang)
+        rep = generate(result, test.name, test.context or "", body.decision_question or "", test.lang or "ja")
         _write_json(d / "report.json", rep)
         _write_json(d / "report_status.json", {"status": "ready", "started": started, "finished": time.time()})
     except Exception as e:  # noqa: BLE001 - surfaced to the client as a status, logged with the id

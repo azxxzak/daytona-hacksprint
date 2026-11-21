@@ -11,6 +11,7 @@ import type { LibraryGroup, Persona } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { LibraryGroupSection } from "./library-groups";
 import { PersonaCard } from "./persona-card";
+import { PersonaSheet } from "./persona-sheet";
 import { useToast } from "./toast";
 import { Button, Card, Dialog, ErrorNote, cx, useDocTitle } from "./ui";
 
@@ -20,7 +21,8 @@ const MAX_BYTES = 500 * 1024 * 1024;
 const MEDIA_RE = /\.(mp4|mov|webm|png|jpe?g)$/i;
 
 type Source = "bank" | "library" | "csv";
-type Facets = { total: number; regions: { name: string; count: number }[]; occupations: { name: string; count: number }[] };
+type FacetItem = { name: string; label?: string; count: number };
+type Facets = { total: number; regions: FacetItem[]; occupations: FacetItem[] };
 type Phase = "idle" | "media" | "csv" | "create";
 
 function DualSlider({ min, max, value, onChange, labelMin, labelMax }: {
@@ -48,12 +50,14 @@ function DualSlider({ min, max, value, onChange, labelMin, labelMax }: {
 
 /** Multi-select over a long list (prefectures, occupations) in a dialog, shown as removable chips outside. */
 function FacetField({ label, items, value, onChange }: {
-  label: string; items: { name: string; count: number }[]; value: string[]; onChange: (v: string[]) => void;
+  label: string; items: FacetItem[]; value: string[]; onChange: (v: string[]) => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const shown = items.filter((i) => i.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const nameOf = (v: string) => items.find((i) => i.name === v)?.label || v;
+  const needle = q.trim().toLowerCase();
+  const shown = items.filter((i) => i.name.toLowerCase().includes(needle) || (i.label ?? "").toLowerCase().includes(needle));
   const toggle = (n: string) => onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
   return (
     <div>
@@ -67,8 +71,8 @@ function FacetField({ label, items, value, onChange }: {
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {value.map((v) => (
             <li key={v}>
-              <button type="button" onClick={() => toggle(v)} aria-label={`${v} ×`} className="inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-0.5 text-xs text-white">
-                {v} <X size={11} aria-hidden />
+              <button type="button" onClick={() => toggle(v)} aria-label={`${nameOf(v)} ×`} className="inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-0.5 text-xs text-white">
+                {nameOf(v)} <X size={11} aria-hidden />
               </button>
             </li>
           ))}
@@ -93,7 +97,7 @@ function FacetField({ label, items, value, onChange }: {
                   type="button" aria-pressed={on} onClick={() => toggle(i.name)}
                   className={cx("flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[13px]", on ? "border-ink bg-ink text-white" : "border-line hover:border-ink")}
                 >
-                  <span className="truncate">{i.name}</span>
+                  <span className="truncate">{i.label || i.name}</span>
                   <span className={cx("tnum text-[11px]", on ? "text-white/70" : "text-mute")}>{i.count}</span>
                 </button>
               </li>
@@ -111,11 +115,11 @@ function FacetField({ label, items, value, onChange }: {
 
 type PreviewArgs = {
   enabled: boolean; ageMin: number; ageMax: number; genders: string; count: number;
-  regions: string[]; occupations: string[]; seed: number; csv: File | null;
+  regions: string[]; occupations: string[]; seed: number; csv: File | null; lang: string;
 };
 
 function usePreview(a: PreviewArgs) {
-  const key = [a.ageMin, a.ageMax, a.genders, a.count, a.regions.join("|"), a.occupations.join("|"), a.seed, a.csv ? `${a.csv.name}:${a.csv.size}:${a.csv.lastModified}` : ""].join("~");
+  const key = [a.ageMin, a.ageMax, a.genders, a.count, a.regions.join("|"), a.occupations.join("|"), a.seed, a.csv ? `${a.csv.name}:${a.csv.size}:${a.csv.lastModified}` : "", a.lang].join("~");
   const [res, setRes] = useState<{ key: string; personas: Persona[] | null; matched?: number; error: unknown }>({ key: "", personas: null, error: null });
   const [last, setLast] = useState<{ personas: Persona[]; matched?: number } | null>(null);
   useEffect(() => {
@@ -169,7 +173,7 @@ function StepHead({ n, title }: { n: number; title: string }) {
 }
 
 export function NewTest() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const router = useRouter();
   const toast = useToast();
   const params = useSearchParams();
@@ -186,6 +190,7 @@ export function NewTest() {
   const [occupations, setOccupations] = useState<string[]>([]);
   const [seed, setSeed] = useState(1);
   const [csv, setCsv] = useState<File | null>(null);
+  const [sheet, setSheet] = useState<Persona | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dur, setDur] = useState<number | null>(null);
@@ -216,7 +221,7 @@ export function NewTest() {
   const previewOn = source === "bank" || (source === "csv" && !!csv);
   const { personas, matched, loading: previewLoading, error: previewError } = usePreview({
     enabled: previewOn, ageMin: age[0], ageMax: age[1], genders: gendersParam, count,
-    regions: source === "bank" ? regions : [], occupations: source === "bank" ? occupations : [], seed, csv: source === "csv" ? csv : null,
+    regions: source === "bank" ? regions : [], occupations: source === "bank" ? occupations : [], seed, csv: source === "csv" ? csv : null, lang,
   });
 
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
@@ -287,7 +292,7 @@ export function NewTest() {
             : { source: "bank", age_min: age[0], age_max: age[1], genders: gendersArr, count, seed, ...(regions.length ? { regions } : {}), ...(occupations.length ? { occupations } : {}) };
       const { id } = await api<{ id: string }>("/api/tests", {
         method: "POST",
-        json: { upload_id: mediaId, name: name.trim() || undefined, context: context.trim() || undefined, panel },
+        json: { upload_id: mediaId, name: name.trim() || undefined, context: context.trim() || undefined, panel, lang },
       });
       router.push(`/tests/${id}`);
     } catch (e) {
@@ -390,7 +395,7 @@ export function NewTest() {
                     const p = libById.get(id);
                     return (
                       <li key={id} className="relative">
-                        {p ? <PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} /> : <div className="pulse aspect-[4/5] rounded-card bg-surface" />}
+                        {p ? <PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} onDetails={() => setSheet(p)} /> : <div className="pulse aspect-[4/5] rounded-card bg-surface" />}
                         <button
                           type="button" aria-label={t("new.libRemove", { name: p?.name ?? id })}
                           onClick={() => setLibIds((x) => x.filter((i) => i !== id))}
@@ -486,7 +491,7 @@ export function NewTest() {
                 {previewError != null && !personas && <ErrorNote>{t("new.previewError")} {errorText(previewError, t)}</ErrorNote>}
                 <ul className={cx("grid grid-cols-2 gap-x-4 gap-y-6 transition-opacity duration-300 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5", previewLoading && personas && "opacity-50")}>
                   {(personas ?? []).map((p) => (
-                    <li key={p.id}><PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} /></li>
+                    <li key={p.id}><PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} onDetails={p.profile ? () => setSheet(p) : undefined} /></li>
                   ))}
                   {!personas && !previewError && Array.from({ length: Math.min(count, 10) }, (_, i) => (
                     <li key={i}><div className="pulse aspect-[4/5] rounded-card bg-surface" style={{ animationDelay: `${i * 80}ms` }} /><div className="mt-2 h-2.5 w-2/3 rounded bg-surface" /><div className="mt-1.5 h-3 w-full rounded bg-surface" /></li>
@@ -584,6 +589,7 @@ export function NewTest() {
           <Button onClick={() => setPicker(false)}>{t("new.libDone")}</Button>
         </div>
       </Dialog>
+      <PersonaSheet persona={sheet} pid={sheet?.id ?? null} onClose={() => setSheet(null)} />
     </div>
   );
 
@@ -595,7 +601,7 @@ export function NewTest() {
           <div>
             <dt className="flex items-center gap-2 text-xs text-mute"><span className={cx("grid size-4 place-items-center rounded-full", audienceOk ? "bg-ink text-lime" : "border border-line")} aria-hidden>{audienceOk && <Check size={10} strokeWidth={3} />}</span>{t("new.sumAudience")}</dt>
             <dd className="mt-1 font-medium leading-snug">{audienceSummary || t("new.sumNone")}</dd>
-            {source === "bank" && (regions.length > 0 || occupations.length > 0) && <dd className="mt-0.5 text-xs text-mute">{[...regions, ...occupations].join(" · ")}</dd>}
+            {source === "bank" && (regions.length > 0 || occupations.length > 0) && <dd className="mt-0.5 text-xs text-mute">{[...regions.map((r) => facets.data?.regions.find((x) => x.name === r)?.label || r), ...occupations.map((o) => facets.data?.occupations.find((x) => x.name === o)?.label || o)].join(" · ")}</dd>}
           </div>
           <div>
             <dt className="flex items-center gap-2 text-xs text-mute"><span className={cx("grid size-4 place-items-center rounded-full", file ? "bg-ink text-lime" : "border border-line")} aria-hidden>{file && <Check size={10} strokeWidth={3} />}</span>{t("new.sumAd")}</dt>

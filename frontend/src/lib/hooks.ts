@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useI18n } from "@/components/i18n-provider";
 import { ApiError, api } from "./api";
 import type { Test, TestSummary } from "./types";
 
 export type Loadable<T> = { data: T | null; error: ApiError | null; loading: boolean; reload: () => void };
 
 export function useApi<T>(path: string | null): Loadable<T> {
+  const { lang } = useI18n(); // switching the UI language refetches: data comes back in that language
   const [tick, setTick] = useState(0);
-  const key = `${path}#${tick}`;
+  const key = `${path}#${tick}#${lang}`;
   const [res, setRes] = useState<{ key: string; data: T | null; error: ApiError | null } | null>(null);
 
   useEffect(() => {
@@ -29,6 +31,7 @@ export function useApi<T>(path: string | null): Loadable<T> {
 
 /** Poll a path every `ms` while `shouldPoll(data)` holds. */
 export function usePolled<T>(path: string, shouldPoll: (d: T) => boolean, ms: number): Loadable<T> {
+  const { lang } = useI18n();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,7 +67,7 @@ export function usePolled<T>(path: string, shouldPoll: (d: T) => boolean, ms: nu
       ac.abort();
       clearTimeout(timer);
     };
-  }, [path, ms, tick]);
+  }, [path, ms, tick, lang]);
 
   const reload = useCallback(() => setTick((n) => n + 1), []);
   return { data, error, loading, reload };

@@ -20,7 +20,7 @@ PROFILE_RULES = """Rules for realism (important):
   habits, things they ignore, brands they dislike, things they do NOT use.
 - Never turn a non-user into a user. If a category or product doesn't fit their life, say they don't use it.
 - Ad attitudes must vary across people: many skip ads, distrust them, or barely notice them.
-- No marketing language, no flattery. Plain everyday Japanese.
+- No marketing language, no flattery. Plain everyday {language}.
 - Stay consistent with the given attributes (age, gender, job, region, segment)."""
 
 SCHEMA = """{
@@ -64,9 +64,13 @@ def _parse_list(text):
     return json.loads(m.group(0)) if m else []
 
 
-def cached(p: dict) -> dict | None:
+def _suffix(lang: str) -> str:
+    return ".en" if lang == "en" else ""
+
+
+def cached(p: dict, lang: str = "ja") -> dict | None:
     try:
-        return json.loads(_profile_text(seed_key(p)))
+        return json.loads(_profile_text(seed_key(p) + _suffix(lang)))
     except (FileNotFoundError, OSError, ValueError):
         return None
 
@@ -76,11 +80,13 @@ def _profile_text(k: str) -> str:
     return (DIR / f"{k}.json").read_text()  # profiles are immutable; cache hits in memory
 
 
-def _generate_batch(batch, model):
+def _generate_batch(batch, model, lang="ja"):
+    language = "English" if lang == "en" else "Japanese"
     lines = "\n".join(f"{i + 1}. {_seed_text(p)}" for i, p in enumerate(batch))
     text, _ = llm.call(model=model, max_tokens=12000, tag="profile", cache=True, messages=[{"role": "user", "content":
         f"Create consumer-research persona profiles for these {len(batch)} people living in Japan.\n\n{lines}\n\n"
-        f"{PROFILE_RULES}\n\nWrite all text fields in Japanese. Big Five scores are integers 0-100.\n"
+        f"{PROFILE_RULES.format(language=language)}\n\nWrite all text fields in {language}"
+        f"{' (full_name: a Japanese name romanized as Given Family; meta like 20s / Female / Student / Single)' if lang == 'en' else ''}. Big Five scores are integers 0-100.\n"
         f"Return ONLY a JSON array with {len(batch)} objects in the same order, each exactly in this shape:\n{SCHEMA}"}])
     out = _parse_list(text)
     if len(out) != len(batch):
@@ -88,17 +94,18 @@ def _generate_batch(batch, model):
     return out
 
 
-def ensure_profiles(personas: list[dict], model=None, log=print, batch_size=4) -> list[dict]:
-    """Adds `profile` to each persona (in place, cached on disk) and refreshes the derived short fields."""
+def ensure_profiles(personas: list[dict], model=None, log=print, batch_size=4, lang="ja") -> list[dict]:
+    """Adds `profile` to each persona (in place, cached on disk) and refreshes the derived short fields.
+    `lang` is the test's language: profiles are written (and cached) in that language."""
     DIR.mkdir(parents=True, exist_ok=True)
-    todo = [p for p in personas if not cached(p)]
+    todo = [p for p in personas if not cached(p, lang)]
     batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
 
     def run(b):
         for attempt in (1, 2):
             try:
-                for p, prof in zip(b, _generate_batch(b, model or llm.FAST_MODEL)):
-                    (DIR / f"{seed_key(p)}.json").write_text(json.dumps(prof, ensure_ascii=False))
+                for p, prof in zip(b, _generate_batch(b, model or llm.FAST_MODEL, lang)):
+                    (DIR / f"{seed_key(p)}{_suffix(lang)}.json").write_text(json.dumps(prof, ensure_ascii=False))
                 return
             except Exception as e:  # noqa: BLE001
                 log(f"profile batch failed (attempt {attempt}): {str(e)[:120]}")
@@ -108,7 +115,7 @@ def ensure_profiles(personas: list[dict], model=None, log=print, batch_size=4) -
         with ThreadPoolExecutor(max_workers=6) as pool:
             list(pool.map(llm.bind(run), batches))
     for p in personas:
-        prof = cached(p)
+        prof = cached(p, lang)
         if prof:
             p["profile"] = prof
             p["name"] = re.sub(r"[（(].*?[）)]", "", prof.get("full_name") or p.get("name", "")).strip() or p.get("name")
@@ -131,7 +138,7 @@ def compact(p: dict) -> str:
 
 
 # ---------------- tier 2 ----------------
-DEEP_PROMPT = """Write a deep persona report in Japanese for this person, for marketers and planners. Use markdown.
+DEEP_PROMPT_JA = """Write a deep persona report in Japanese for this person, for marketers and planners. Use markdown.
 Base everything on the profile below; you may add plausible detail, but never contradict it, and keep their
 friction, non-use and ad indifference intact.
 
@@ -152,27 +159,49 @@ Profile:
 {profile}
 Attributes: {seed}"""
 
+DEEP_PROMPT_EN = """Write a deep persona report in English for this person, for marketers and planners. Use markdown.
+Base everything on the profile below; you may add plausible detail, but never contradict it, and keep their
+friction, non-use and ad indifference intact. They live in Japan; keep Japanese specifics (romanized, with a short gloss).
 
-def deep_path(p: dict) -> SPath:
-    return DIR / f"{seed_key(p)}.deep.md"
+Sections (use these exact ### headings):
+### Persona report — name, age, job, income, household, personality and values, daily life (weekday / weekend),
+information behaviour and media, attitude to ads, consumption and money, health, relationships, outlook.
+### Insights — 3 insights. For each: **Insight** (one bold line), **In their words** (a first-person quote, 3-5
+sentences in their own voice), **Why** (1 paragraph), **Implication** (what it means for brands/ads).
+### Contradictions — 3 contradictions in their values or behaviour; for each the contradiction, the insight that
+resolves it, and a short first-person quote.
+### Detailed personality — Big Five (each 0-100 with one sentence), values (TOP3 / BOTTOM3 with a line each), speech
+style with typical phrases, knowledge depth (deep / shallow / none), information gathering and sharing habits.
+### Consumer behaviour — categories, motives, barriers, brand choice, purchase flow.
+### Inner psychology — secrets they would not say, best and worst traits, goals, motto, three formative experiences.
+### Communication analysis — 3-4 paragraphs on how they talk with friends, family, strangers and brands, and why.
+
+Profile:
+{profile}
+Attributes: {seed}"""
+DEEP_PROMPT = DEEP_PROMPT_JA
 
 
-def deep_status(p: dict) -> str:
-    if deep_path(p).exists():
+def deep_path(p: dict, lang: str = "ja") -> SPath:
+    return DIR / f"{seed_key(p)}.deep{_suffix(lang)}.md"
+
+
+def deep_status(p: dict, lang: str = "ja") -> str:
+    if deep_path(p, lang).exists():
         return "ready"
-    if (DIR / f"{seed_key(p)}.deep.lock").exists():
+    if (DIR / f"{seed_key(p)}.deep{_suffix(lang)}.lock").exists():
         return "generating"
     return "none"
 
 
-def generate_deep(p: dict):
-    lock = DIR / f"{seed_key(p)}.deep.lock"
+def generate_deep(p: dict, lang: str = "ja"):
+    lock = DIR / f"{seed_key(p)}.deep{_suffix(lang)}.lock"
     DIR.mkdir(parents=True, exist_ok=True)
     lock.write_text("1")
     try:
         text, _ = llm.call(model=llm.CHAT_MODEL, max_tokens=16000, tag="profile-deep", budget_s=600,
-                           messages=[{"role": "user", "content": DEEP_PROMPT.format(
+                           messages=[{"role": "user", "content": (DEEP_PROMPT_EN if lang == "en" else DEEP_PROMPT_JA).format(
                                profile=json.dumps(p.get("profile") or {}, ensure_ascii=False), seed=_seed_text(p))}])
-        deep_path(p).write_text(text)
+        deep_path(p, lang).write_text(text)
     finally:
         lock.unlink(missing_ok=True)
