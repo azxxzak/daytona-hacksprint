@@ -71,7 +71,6 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [caption, setCaption] = useState("");
   const [mediaError, setMediaError] = useState(false);
-  const [sideMax, setSideMax] = useState<number | undefined>();
 
   const stageRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLVideoElement & HTMLImageElement>(null);
@@ -110,15 +109,6 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
     }
     return { tracks };
   }, [test.personas, test.gaze]);
-
-  // Side list height follows the stage so both columns line up on desktop.
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setSideMax(el.getBoundingClientRect().height));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   useEffect(() => {
     const [GW, GH] = test.grid;
@@ -363,10 +353,12 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
           )}
         </div>
 
+        {/* The list never sets the row height: on desktop it fills the player's height and scrolls inside
+            (a 60-viewer panel would otherwise stretch the page by ~9,000px); on mobile it is capped. */}
+        <div className="relative min-h-[320px] lg:min-h-[360px]">
         <aside
           aria-label={t("pl.thoughts")}
-          className="flex min-h-[320px] flex-col overflow-hidden rounded-card bg-surface lg:min-h-0"
-          style={sideMax ? { maxHeight: `max(${Math.round(sideMax)}px, 320px)` } : undefined}
+          className="flex max-h-[440px] flex-col overflow-hidden rounded-card bg-surface lg:absolute lg:inset-0 lg:max-h-none"
         >
           <h3 className="shrink-0 border-b border-line px-4 py-3 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("pl.thoughts")}</h3>
           <ul className="min-h-0 flex-1 divide-y divide-line overflow-y-auto overscroll-contain">
@@ -387,6 +379,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
             ))}
           </ul>
         </aside>
+        </div>
       </div>
     </section>
   );

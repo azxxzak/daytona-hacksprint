@@ -98,7 +98,7 @@ class Usage(SQLModel, table=True):
 _NEW_COLUMNS = {  # columns added after the first deploy; create_all() does not alter existing tables
     "test": [("worker_id", "VARCHAR"), ("worker_checked_at", "FLOAT DEFAULT 0"), ("started_at", "FLOAT DEFAULT 0"),
              ("lang", "VARCHAR DEFAULT 'ja'")],
-    "persona_bank": [("profile_en", "JSON")],
+    "persona_bank": [("profile_en", "JSON"), ("search_text", "TEXT")],
 }
 _inited = False
 

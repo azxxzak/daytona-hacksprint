@@ -191,6 +191,18 @@ def _csv_list(s: str) -> list[str]:
     return [x.strip() for x in (s or "").split(",") if x.strip()]
 
 
+@app.get("/api/audience/search")
+def search_people(q: str = "", age_min: int = 15, age_max: int = 79, genders: str = "F,M", regions: str = "",
+                  occupations: str = "", offset: int = 0, limit: int = 40, user: User = auth.CurrentUser):
+    """Browse all bank personas (for hand-picking a panel)."""
+    if persona_bank is None:
+        return {"personas": [], "total": 0}
+    ps, total = persona_bank.search(q.strip()[:80], age_min, age_max, _genders(genders), _csv_list(regions),
+                                    _csv_list(occupations), max(0, offset), min(max(limit, 1), 60))
+    llm.current_user.set(user.email)
+    return {"personas": [persona_out(p) for p in localize.personas(ps)], "total": total}
+
+
 @app.get("/api/audience/facets")
 def facets(user: User = auth.CurrentUser):
     if persona_bank is None:
@@ -222,12 +234,15 @@ def _serve_portrait(p: dict) -> Response:
 
 
 @app.get("/api/avatars/p/{pid}.jpg")
-def avatar_by_persona(pid: str, user: User = auth.CurrentUser):
+def avatar_by_persona(pid: str, draw: int = 1, user: User = auth.CurrentUser):
+    """draw=0 (browsing 5,000 people): only portraits that already exist; nothing new is drawn (each costs money)."""
     if not re.fullmatch(r"(lib|bank)_[A-Za-z0-9_]{1,40}", pid):
         raise HTTPException(404, "Not found.")
     p = _persona_by_source(pid)
     if not p:
         raise HTTPException(404, "Persona not found.")
+    if not draw and avatars.cached(p) is None:
+        raise HTTPException(404, "No portrait yet.")
     return _serve_portrait(p)
 
 
@@ -292,12 +307,20 @@ class NewTestIn(BaseModel):
 
 def _panel_from(body: NewTestIn, user: User) -> list[dict]:
     pn = body.panel
-    if pn.source == "library":
+    if pn.source == "library":  # hand-picked: curated library (lib_*) and/or anyone from the bank (bank_*)
         lib = library.all_personas()
         ids = list(dict.fromkeys(pn.persona_ids))
-        if not (1 <= len(ids) <= 60) or any(i not in lib for i in ids):
-            raise HTTPException(400, "Pick between 1 and 60 personas from the library.")
-        return [{**lib[i], "library_id": i, "source_id": i, "id": f"P{n + 1:03d}"} for n, i in enumerate(ids)]
+        bank = {p["id"]: p for p in persona_bank.get([i for i in ids if i.startswith("bank_")])} if persona_bank else {}
+        if not (1 <= len(ids) <= 60) or any(i not in lib and i not in bank for i in ids):
+            raise HTTPException(400, "Pick between 1 and 60 people.")
+        out = []
+        for n, i in enumerate(ids):
+            if i in lib:
+                out.append({**lib[i], "library_id": i, "source_id": i, "id": f"P{n + 1:03d}"})
+            else:
+                out.append({**bank[i], "source_id": i, "id": f"P{n + 1:03d}",
+                            "color": persona_bank.COLORS[n % len(persona_bank.COLORS)]})
+        return out
     if pn.source == "csv":
         try:
             raw = SPath(_upload_key(user, pn.csv_upload_id)).read_bytes()

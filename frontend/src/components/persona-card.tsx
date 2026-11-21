@@ -76,6 +76,14 @@ export function PersonaCard({
             </span>
           </button>
         )}
+        {selecting && onDetails && (
+          <button
+            type="button" onClick={onDetails} aria-label={`${t("vw.details")}: ${persona.name}`}
+            className="absolute bottom-2 left-2 inline-flex h-7 items-center gap-1 rounded-full bg-ink/80 px-2.5 text-[11px] font-medium text-white backdrop-blur hover:bg-ink"
+          >
+            <Info size={12} aria-hidden /> {t("vw.details")}
+          </button>
+        )}
         {!selecting && onDetails && (
           <button
             type="button"

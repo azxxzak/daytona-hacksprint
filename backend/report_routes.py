@@ -145,3 +145,34 @@ def report_pdf(test_id: str, user=CurrentUser):
             log.exception("pdf conversion failed test=%s", test_id)
             raise HTTPException(500, "PDF conversion failed.") from None
     return _download(pdf, test_id, "pdf", "application/pdf")
+
+
+# ---------------------------------------------------------------- market context (web research + panel)
+@router.get("/api/tests/{test_id}/market")
+def get_market(test_id: str, user=CurrentUser):
+    from core import market
+    t, d = _owned_test(test_id, user)
+    f = d / "market.json"
+    if f.exists():
+        return {"status": "ready", "available": True, "market": json.loads(f.read_text())}
+    return {"status": "none", "available": market.available(), "market": None}
+
+
+@router.post("/api/tests/{test_id}/market")
+def create_market(test_id: str, user=CurrentUser):
+    """Runs inside the request (~1-2 min: Gemini web research, then Claude ties it to the panel)."""
+    from core import llm, market
+    t, d = _owned_test(test_id, user)
+    if t.status != "done":
+        raise HTTPException(409, "The test is not finished yet.")
+    if not market.available():
+        raise HTTPException(503, "Market research is not configured (GEMINI_API_KEY).")
+    result = json.loads((d / "result.json").read_text())
+    llm.current_user.set(user.email)
+    try:
+        m = market.generate(t.name, t.context or "", result, t.lang or "ja", user.email)
+    except Exception as e:  # noqa: BLE001
+        log.warning("market research failed for %s: %s", test_id, e)
+        raise HTTPException(502, f"Market research failed: {str(e)[:160]}") from None
+    _write_json(d / "market.json", m)
+    return {"status": "ready", "available": True, "market": m}

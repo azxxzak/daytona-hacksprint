@@ -90,6 +90,8 @@ def main():
         for bid in ids:
             collect(bid)
     print("still missing:", len(missing()))
+    from core.persona_bank import build_search_text
+    print("search text rows:", build_search_text())
 
 
 if __name__ == "__main__":

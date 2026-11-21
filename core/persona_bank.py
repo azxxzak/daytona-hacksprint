@@ -56,6 +56,7 @@ class PersonaBank(SQLModel, table=True):
     profile: dict = Field(default_factory=dict, sa_column=Column(JSON))   # tier-1 profile (persona_profile.SCHEMA)
     seed: dict = Field(default_factory=dict, sa_column=Column(JSON))
     profile_en: dict | None = Field(default=None, sa_column=Column(JSON))  # English profile (core.localize)
+    search_text: str | None = Field(default=None, sa_column=Column(Text))  # lower-case JA+EN text for people search
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -653,6 +654,51 @@ def sample(age_min=15, age_max=79, genders=("Female", "Male"), count=20, regions
     rows = _fetch(chosen)
     out = [_to_persona(rows[i], COLORS[n % len(COLORS)]) for n, i in enumerate(x for x in chosen if x in rows)]
     return out, matched
+
+
+def build_search_text() -> int:
+    """Fill persona_bank.search_text (Japanese + English name, headline, occupation, prefecture). Run after a
+    (re)build or translation; search() then filters in SQL without parsing the big JSON columns."""
+    from sqlalchemy import text, update as sa_update
+    from backend.db import session
+    from core import localize
+    with session() as s:
+        rows = s.execute(text(
+            "select id, occupation, region, profile->>'full_name', profile->>'headline', "
+            "profile_en->>'full_name', profile_en->>'headline' from persona_bank")).all()
+        upd = []
+        for i, occ, reg, *rest in rows:
+            parts = [occ, reg, localize.OCCUPATION_EN.get(occ, ""), localize.region(reg), *rest]
+            upd.append({"id": i, "search_text": " ".join(str(x) for x in parts if x).lower()})
+        for k in range(0, len(upd), 500):
+            s.execute(sa_update(PersonaBank), upd[k:k + 500])
+        s.commit()
+    return len(upd)
+
+
+def _text_match(words: list[str]) -> set[str]:
+    from sqlalchemy import and_, select as sa_select
+    from backend.db import session
+    cond = and_(*[PersonaBank.search_text.ilike(f"%{w.replace('%', '').replace('_', '')}%") for w in words])
+    with session() as s:
+        return set(s.execute(sa_select(PersonaBank.id).where(cond)).scalars().all())
+
+
+def search(q="", age_min=15, age_max=79, genders=("Female", "Male"), regions=None, occupations=None,
+           offset=0, limit=40) -> tuple[list[dict], int]:
+    """Browse the whole bank: free-text query (any language) + filters. Stable, mixed order (not by id), paged."""
+    gset = {"Female" if str(g).lower().startswith(("f", "女")) else "Male" for g in (genders or GENDERS)}
+    rset, oset = _norm_regions(regions), (set(occupations) if occupations else None)
+    cand = [r for r in _index() if age_min <= r[1] <= age_max and r[2] in gset
+            and (rset is None or r[3] in rset) and (oset is None or r[4] in oset)]
+    words = [w for w in str(q or "").lower().split() if w]
+    if words:
+        hit = _text_match(words[:6])
+        cand = [r for r in cand if r[0] in hit]
+    import hashlib as _h
+    cand.sort(key=lambda r: _h.md5(r[0].encode()).hexdigest())
+    page = [r[0] for r in cand[offset:offset + limit]]
+    return get(page), len(cand)
 
 
 def get(ids) -> list[dict]:

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, FileUp, Film, Image as ImageIcon, Loader2, Play, Plus, RefreshCw, Search, Shuffle, Upload, X } from "lucide-react";
+import { ArrowLeft, Check, FileUp, Film, Image as ImageIcon, Loader2, Play, Plus, RefreshCw, Shuffle, Upload, X } from "lucide-react";
 import { ApiError, api, uploadFile, uploadTest } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useApi } from "@/lib/hooks";
@@ -12,6 +12,8 @@ import { useI18n } from "./i18n-provider";
 import { LibraryGroupSection } from "./library-groups";
 import { PersonaCard } from "./persona-card";
 import { PersonaSheet } from "./persona-sheet";
+import { FacetField, type FacetItem } from "./facet-field";
+import { PeopleBrowser } from "./people-browser";
 import { useToast } from "./toast";
 import { Button, Card, Dialog, ErrorNote, cx, useDocTitle } from "./ui";
 
@@ -21,7 +23,6 @@ const MAX_BYTES = 500 * 1024 * 1024;
 const MEDIA_RE = /\.(mp4|mov|webm|png|jpe?g)$/i;
 
 type Source = "bank" | "library" | "csv";
-type FacetItem = { name: string; label?: string; count: number };
 type Facets = { total: number; regions: FacetItem[]; occupations: FacetItem[] };
 type Phase = "idle" | "media" | "csv" | "create";
 
@@ -49,69 +50,6 @@ function DualSlider({ min, max, value, onChange, labelMin, labelMax }: {
 }
 
 /** Multi-select over a long list (prefectures, occupations) in a dialog, shown as removable chips outside. */
-function FacetField({ label, items, value, onChange }: {
-  label: string; items: FacetItem[]; value: string[]; onChange: (v: string[]) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const nameOf = (v: string) => items.find((i) => i.name === v)?.label || v;
-  const needle = q.trim().toLowerCase();
-  const shown = items.filter((i) => i.name.toLowerCase().includes(needle) || (i.label ?? "").toLowerCase().includes(needle));
-  const toggle = (n: string) => onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">{label}</span>
-        <button type="button" onClick={() => setOpen(true)} className="inline-flex h-8 items-center gap-1 rounded-full border border-line px-3 text-xs hover:border-ink">
-          <Plus size={12} aria-hidden /> {value.length ? t("new.pickN", { n: value.length }) : t("new.any")}
-        </button>
-      </div>
-      {value.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {value.map((v) => (
-            <li key={v}>
-              <button type="button" onClick={() => toggle(v)} aria-label={`${nameOf(v)} ×`} className="inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-0.5 text-xs text-white">
-                {nameOf(v)} <X size={11} aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <Dialog open={open} onClose={() => setOpen(false)} label={label} wide>
-        <h2 className="pr-10 text-lg font-bold">{label}</h2>
-        <div className="relative mt-4">
-          <Search size={15} aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
-          <label htmlFor={`fq-${label}`} className="sr-only">{t("new.filterSearch")}</label>
-          <input
-            id={`fq-${label}`} type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("new.filterSearch")}
-            className="h-10 w-full rounded-full border border-line bg-canvas pl-10 pr-4 text-sm"
-          />
-        </div>
-        <ul className="mt-4 grid max-h-[50vh] grid-cols-2 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
-          {shown.map((i) => {
-            const on = value.includes(i.name);
-            return (
-              <li key={i.name}>
-                <button
-                  type="button" aria-pressed={on} onClick={() => toggle(i.name)}
-                  className={cx("flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[13px]", on ? "border-ink bg-ink text-white" : "border-line hover:border-ink")}
-                >
-                  <span className="truncate">{i.label || i.name}</span>
-                  <span className={cx("tnum text-[11px]", on ? "text-white/70" : "text-mute")}>{i.count}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="mt-5 flex justify-between">
-          <Button variant="ghost" size="sm" onClick={() => onChange([])} disabled={value.length === 0}>{t("new.clear")}</Button>
-          <Button onClick={() => setOpen(false)}>{t("new.done")}</Button>
-        </div>
-      </Dialog>
-    </div>
-  );
-}
 
 type PreviewArgs = {
   enabled: boolean; ageMin: number; ageMax: number; genders: string; count: number;
@@ -191,6 +129,8 @@ export function NewTest() {
   const [seed, setSeed] = useState(1);
   const [csv, setCsv] = useState<File | null>(null);
   const [sheet, setSheet] = useState<Persona | null>(null);
+  const [pickTab, setPickTab] = useState<"all" | "curated">("all");
+  const [bankPicked, setBankPicked] = useState<Map<string, Persona>>(new Map());
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dur, setDur] = useState<number | null>(null);
@@ -208,13 +148,18 @@ export function NewTest() {
   const ctxId = useId();
   const hintId = useId();
 
-  const facets = useApi<Facets>(source === "bank" ? "/api/audience/facets" : null);
+  const facets = useApi<Facets>(source === "bank" || source === "library" ? "/api/audience/facets" : null);
   const lib = useApi<{ groups: LibraryGroup[] }>(source === "library" ? "/api/library" : null);
   const libById = useMemo(() => {
-    const m = new Map<string, Persona>();
+    const m = new Map<string, Persona>(bankPicked);
     lib.data?.groups.forEach((g) => g.personas.forEach((p) => m.set(p.id, p)));
     return m;
-  }, [lib.data]);
+  }, [lib.data, bankPicked]);
+  const togglePick = (p: Persona) => {
+    if (!libIds.includes(p.id) && libIds.length >= 60) { toast.error(t("lib.maxPick")); return; }
+    if (p.id.startsWith("bank_")) setBankPicked((m) => new Map(m).set(p.id, { ...p, avatar_url: p.avatar_url.replace("?draw=0", "") }));
+    setLibIds((x) => (x.includes(p.id) ? x.filter((i) => i !== p.id) : [...x, p.id]));
+  };
 
   const gendersArr = (["F", "M"] as const).filter((g) => genders[g]);
   const gendersParam = gendersArr.join(",");
@@ -504,12 +449,12 @@ export function NewTest() {
           {/* STEP 2 */}
           <section aria-labelledby="step2">
             <div id="step2"><StepHead n={2} title={t("new.step2")} /></div>
-            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-[1.3fr_1fr]">
+            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                 onDragLeave={() => setDragging(false)}
                 onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files[0]); }}
-                className={cx("relative grid min-h-[260px] place-items-center rounded-card border-2 border-dashed p-6 text-center transition-colors", dragging ? "border-ink bg-white" : "border-line bg-surface", file && "border-solid border-transparent")}
+                className={cx("relative grid min-h-[260px] min-w-0 place-items-center rounded-card border-2 border-dashed p-6 text-center transition-colors", dragging ? "border-ink bg-white" : "border-line bg-surface", file && "border-solid border-transparent")}
               >
                 <input
                   ref={fileInput} id="media-file" type="file" className="sr-only" accept=".mp4,.mov,.webm,.png,.jpg,.jpeg,video/*,image/png,image/jpeg"
@@ -517,10 +462,10 @@ export function NewTest() {
                   aria-describedby={fileError ? `${hintId}-err` : hintId}
                 />
                 {file && previewUrl ? (
-                  <div className="w-full">
+                  <div className="w-full min-w-0">
                     <div className="mx-auto max-h-[300px] overflow-hidden rounded-xl bg-ink">
                       {isVideo
-                        ? <video src={previewUrl} muted playsInline preload="metadata" className="mx-auto max-h-[300px] w-full object-contain" />
+                        ? <video src={previewUrl} muted playsInline preload="metadata" className="mx-auto block max-h-[300px] w-full max-w-full object-contain" />
                         // eslint-disable-next-line @next/next/no-img-element -- local blob preview
                         : <img src={previewUrl} alt="" className="mx-auto max-h-[300px] w-full object-contain" />}
                     </div>
@@ -575,16 +520,31 @@ export function NewTest() {
 
       <Dialog open={picker} onClose={() => setPicker(false)} label={t("new.libPickerTitle")} side xl>
         <h2 className="pr-10 text-xl font-bold">{t("new.libPickerTitle")}</h2>
-        <div className="mt-6 space-y-10">
-          {lib.loading && <p className="pulse text-sm text-mute">{t("common.loading")}</p>}
-          {lib.data?.groups.map((g) => (
-            <LibraryGroupSection
-              key={g.id} group={g} headingAs="h3" selecting picked={new Set(libIds)}
-              onToggle={(p) => setLibIds((x) => (x.includes(p.id) ? x.filter((i) => i !== p.id) : x.length >= 60 ? (toast.error(t("lib.maxPick")), x) : [...x, p.id]))}
-            />
+        <div role="tablist" aria-label={t("new.libPickerTitle")} className="mt-4 flex gap-6 border-b border-line">
+          {([["all", t("pick.tabAll"), facets.data ? facets.data.total.toLocaleString() : ""], ["curated", t("pick.tabCurated"), "52"]] as const).map(([k, label, n]) => (
+            <button
+              key={k} type="button" role="tab" aria-selected={pickTab === k} onClick={() => setPickTab(k)}
+              className={cx("-mb-px border-b-2 py-2.5 text-sm font-medium transition-colors", pickTab === k ? "border-ink text-ink" : "border-transparent text-mute hover:text-ink")}
+            >
+              {label} {n && <span className="tnum ml-1 text-xs text-mute">{n}</span>}
+            </button>
           ))}
         </div>
-        <div className="sticky bottom-0 -mx-6 mt-6 flex items-center justify-between bg-surface px-6 py-3 sm:-mx-8 sm:px-8">
+        <div className="mt-5">
+          {pickTab === "all" ? (
+            <PeopleBrowser facets={facets.data} picked={new Set(libIds)} onToggle={togglePick} onDetails={(p) => setSheet({ ...p, avatar_url: p.avatar_url.replace("?draw=0", "") })} />
+          ) : (
+            <div className="space-y-10">
+              {lib.loading && <p className="pulse text-sm text-mute">{t("common.loading")}</p>}
+              {lib.data?.groups.map((g) => (
+                <LibraryGroupSection
+                  key={g.id} group={g} headingAs="h3" selecting picked={new Set(libIds)} onToggle={togglePick} onDetails={setSheet}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="sticky bottom-0 -mx-6 mt-6 flex items-center justify-between border-t border-line bg-surface px-6 py-3 sm:-mx-8 sm:px-8">
           <span className="tnum text-sm text-mute">{t("vw.selectedCount", { n: libIds.length })}</span>
           <Button onClick={() => setPicker(false)}>{t("new.libDone")}</Button>
         </div>
