@@ -183,7 +183,7 @@ def month_usage(user: str) -> dict:
 
 
 # ----------------------------------------------------------------------------- spend guard
-MONTHLY_BUDGET_USD = float(os.getenv("MONTHLY_BUDGET_USD", "150"))   # per user; 0 disables the guard
+MONTHLY_BUDGET_USD = float(os.getenv("MONTHLY_BUDGET_USD", "50"))   # per user; 0 disables the guard
 _budget_seen: dict[str, tuple[float, float]] = {}                    # user -> (checked_at, month_usd)
 
 
