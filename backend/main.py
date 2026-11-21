@@ -35,7 +35,9 @@ except Exception:  # noqa: BLE001
 
 logging.basicConfig(level=logging.INFO)
 db.init()
-app = FastAPI(title="AdLens API", docs_url="/api/docs", openapi_url="/api/openapi.json")
+_PUBLIC_DOCS = not os.getenv("VERCEL")  # API docs only in local development, never on the public deployment
+app = FastAPI(title="AdLens API", docs_url="/api/docs" if _PUBLIC_DOCS else None, redoc_url=None,
+              openapi_url="/api/openapi.json" if _PUBLIC_DOCS else None)
 
 
 @app.middleware("http")
