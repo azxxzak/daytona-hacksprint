@@ -9,3 +9,5 @@ samples/*.json
 reports/
 .streamlit/secrets.toml
 data/
+.vercel
+.env*.local
