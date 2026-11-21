@@ -4,15 +4,38 @@
     {
       "name": "api",
       "runtimeExecutable": ".venv/bin/uvicorn",
-      "runtimeArgs": ["backend.main:app", "--port", "8000"],
+      "runtimeArgs": [
+        "backend.main:app",
+        "--port",
+        "8000"
+      ],
       "port": 8000,
       "url": "http://localhost:8000"
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "web-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "start",
+        "--",
+        "-p",
+        "3001"
+      ],
+      "port": 3001
     }
   ]
 }

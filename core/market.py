@@ -83,6 +83,7 @@ def _gemini(prompt: str, model: str) -> dict:
 
 def research(brief: str, user: str = "system") -> dict:
     """-> {text (with [n] markers), sources [{id, title, url}], queries, model}."""
+    llm.check_budget(user)
     last = None
     for model in dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK]):
         try:

@@ -30,7 +30,7 @@ def transcribe(src: str) -> list:
 
         import imageio_ffmpeg
         # Decode audio with ffmpeg ourselves (avoids PyAV version issues): 16 kHz mono float32.
-        raw = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-loglevel", "error", "-i", src, "-vn",
+        raw = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-loglevel", "error", "-protocol_whitelist", "file", "-i", src, "-vn",
                               "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
                              capture_output=True, timeout=300).stdout
         audio = np.frombuffer(raw, dtype=np.float32)
@@ -54,7 +54,7 @@ def make_proxy(src: str, dst: str) -> bool:
 
         import imageio_ffmpeg
         ff = imageio_ffmpeg.get_ffmpeg_exe()
-        r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", src,
+        r = subprocess.run([ff, "-y", "-loglevel", "error", "-protocol_whitelist", "file", "-i", src,
                             "-vf", "scale='min(854,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
                             "-crf", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k",
                             "-movflags", "+faststart", dst], capture_output=True, text=True, timeout=600)

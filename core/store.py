@@ -179,9 +179,16 @@ def _list_keys(prefix: str, depth=1, limit=None) -> list[str]:
     return out
 
 
+BUCKET_FILE_LIMIT = 500 * 1024 * 1024   # enforced by Storage itself, so a signed PUT cannot exceed it
+
+
 def ensure_bucket():
+    """Private bucket with a hard per-file size limit (the plan's own limit may be lower)."""
     if REMOTE:
-        r = _http().post("/bucket", json={"id": BUCKET, "name": BUCKET, "public": False})
+        cfg = {"public": False, "file_size_limit": BUCKET_FILE_LIMIT}
+        r = _http().post("/bucket", json={"id": BUCKET, "name": BUCKET, **cfg})
+        if r.status_code >= 400:
+            r = _http().put(f"/bucket/{BUCKET}", json={"id": BUCKET, "name": BUCKET, **cfg})
         return r.status_code
 
 

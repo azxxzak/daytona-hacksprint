@@ -4,6 +4,7 @@ CSV columns recognised (any subset; extra columns are kept as traits):
   id, name, age, gender, region, occupation, income, interests, media, values
 """
 import random
+import re
 
 import csv
 import io
@@ -61,12 +62,33 @@ def sample_personas(n, age_range, genders, seed=42):
     return out
 
 
+# Keys the server sets on persona dicts. A CSV must never supply them: e.g. `_seed` decides which shared profile
+# file a persona reads and writes, `source_id`/`library_id` which shared portrait it uses.
+RESERVED = {"profile", "source_id", "library_id", "color", "avatar_url", "has_deep_profile", "group"}
+MAX_ROWS, MAX_COLS, MAX_CELL = 5000, 30, 300
+
+
+def _clean_key(k) -> str:
+    k = re.sub(r"[^\w\- ]", "", str(k or "")).strip().lower()[:40]
+    return "" if not k or k.startswith("_") or k in RESERVED else k
+
+
 def load_csv(data, age_range, genders) -> list[dict]:
-    """Customer CSV -> persona dicts. `data` is bytes, str or a file object. Unknown columns are kept as traits."""
+    """Customer CSV -> persona dicts. `data` is bytes, str or a file object. Unknown columns are kept as traits
+    (sanitised: no reserved/underscore keys, at most 30 columns, 300 characters per cell, 5,000 rows)."""
     if hasattr(data, "read"):
         data = data.read()
     text = data.decode("utf-8-sig") if isinstance(data, bytes) else data
-    rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in r.items()} for r in csv.DictReader(io.StringIO(text))]
+    rows = []
+    for n, r in enumerate(csv.DictReader(io.StringIO(text))):
+        if n >= MAX_ROWS:
+            break
+        row = {}
+        for k, v in r.items():
+            ck = _clean_key(k)
+            if ck and len(row) < MAX_COLS and isinstance(v, str):
+                row[ck] = v.strip()[:MAX_CELL]
+        rows.append(row)
     wanted = {"F": ("f", "female", "女性", "女"), "M": ("m", "male", "男性", "男")}
     ok_gender = {v for g in genders for v in wanted[g]}
     out = []

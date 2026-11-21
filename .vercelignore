@@ -5,3 +5,8 @@ reports
 .venv
 **/__pycache__
 *.pdf
+.env
+.env.*
+docs
+.claude
+*.md

@@ -1,6 +1,5 @@
 """Decision report endpoints. Include with `app.include_router(report_routes.router)`."""
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -159,10 +158,13 @@ def get_market(test_id: str, user=CurrentUser):
 
 
 @router.post("/api/tests/{test_id}/market")
-def create_market(test_id: str, user=CurrentUser):
-    """Runs inside the request (~1-2 min: Gemini web research, then Claude ties it to the panel)."""
+def create_market(test_id: str, regenerate: bool = False, user=CurrentUser):
+    """Runs inside the request (~1-2 min: Gemini web research, then Claude ties it to the panel).
+    An existing analysis is returned as is unless `regenerate=true` (each run costs money)."""
     from core import llm, market
     t, d = _owned_test(test_id, user)
+    if not regenerate and (d / "market.json").exists():
+        return {"status": "ready", "available": True, "market": json.loads((d / "market.json").read_text())}
     if t.status != "done":
         raise HTTPException(409, "The test is not finished yet.")
     if not market.available():
@@ -171,6 +173,8 @@ def create_market(test_id: str, user=CurrentUser):
     llm.current_user.set(user.email)
     try:
         m = market.generate(t.name, t.context or "", result, t.lang or "ja", user.email)
+    except llm.BudgetExceeded:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("market research failed for %s: %s", test_id, e)
         raise HTTPException(502, f"Market research failed: {str(e)[:160]}") from None

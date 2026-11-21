@@ -7,6 +7,7 @@ Tier 2 (`deep`): a long markdown report (insights, contradictions, communication
 import hashlib
 import json
 import re
+import time
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 
@@ -182,26 +183,35 @@ Attributes: {seed}"""
 DEEP_PROMPT = DEEP_PROMPT_JA
 
 
-def deep_path(p: dict, lang: str = "ja") -> SPath:
-    return DIR / f"{seed_key(p)}.deep{_suffix(lang)}.md"
+def deep_path(p: dict, lang: str = "ja", base: SPath | None = None) -> SPath:
+    """`base`: a test's own folder for that test's viewers, so one user's run can never write a file that another
+    user's library/bank persona reads. Library and bank personas use the shared folder."""
+    return (base or DIR) / f"{seed_key(p)}.deep{_suffix(lang)}.md"
 
 
-def deep_status(p: dict, lang: str = "ja") -> str:
-    if deep_path(p, lang).exists():
+def deep_status(p: dict, lang: str = "ja", base: SPath | None = None) -> str:
+    if deep_path(p, lang, base).exists():
         return "ready"
-    if (DIR / f"{seed_key(p)}.deep{_suffix(lang)}.lock").exists():
+    lock = (base or DIR) / f"{seed_key(p)}.deep{_suffix(lang)}.lock"
+    if lock.exists():
+        try:  # a lock left by a killed request (serverless timeout) expires after 10 minutes
+            if time.time() - float(lock.read_text() or 0) > 600:
+                lock.unlink(missing_ok=True)
+                return "none"
+        except (ValueError, OSError):
+            return "none"
         return "generating"
     return "none"
 
 
-def generate_deep(p: dict, lang: str = "ja"):
-    lock = DIR / f"{seed_key(p)}.deep{_suffix(lang)}.lock"
+def generate_deep(p: dict, lang: str = "ja", base: SPath | None = None):
+    lock = (base or DIR) / f"{seed_key(p)}.deep{_suffix(lang)}.lock"
     DIR.mkdir(parents=True, exist_ok=True)
-    lock.write_text("1")
+    lock.write_text(str(time.time()))
     try:
         text, _ = llm.call(model=llm.CHAT_MODEL, max_tokens=16000, tag="profile-deep", budget_s=600,
                            messages=[{"role": "user", "content": (DEEP_PROMPT_EN if lang == "en" else DEEP_PROMPT_JA).format(
                                profile=json.dumps(p.get("profile") or {}, ensure_ascii=False), seed=_seed_text(p))}])
-        deep_path(p, lang).write_text(text)
+        deep_path(p, lang, base).write_text(text)
     finally:
         lock.unlink(missing_ok=True)

@@ -73,10 +73,10 @@ export function MarketTab({ test }: { test: Test }) {
     api<Resp>(base).then(setData).catch((e) => setLoadError(errorText(e, t)));
   }, [base, t]);
 
-  const run = useCallback(() => {
+  const run = useCallback((regenerate = false) => {
     setBusy(true);
     setSince(Date.now());
-    api<Resp>(base, { method: "POST" })
+    api<Resp>(regenerate ? `${base}?regenerate=true` : base, { method: "POST" })
       .then(setData)
       .catch((e) => toast.error(`${t("mk.error")} ${errorText(e, t)}`))
       .finally(() => setBusy(false));
@@ -116,7 +116,7 @@ export function MarketTab({ test }: { test: Test }) {
           </ul>
         </div>
         <div className="md:text-right">
-          <Button onClick={run} disabled={!data.available}><Search size={16} aria-hidden /> {t("mk.run")}</Button>
+          <Button onClick={() => run()} disabled={!data.available}><Search size={16} aria-hidden /> {t("mk.run")}</Button>
           <p className="mt-2 text-xs text-mute">{data.available ? t("mk.time") : t("mk.off")}</p>
         </div>
       </Card>
@@ -207,7 +207,7 @@ export function MarketTab({ test }: { test: Test }) {
       <section aria-label={t("mk.sources")} className="rounded-card bg-surface p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-bold">{t("mk.sources")} <span className="tnum font-normal text-mute">({S.length})</span></h3>
-          <Button variant="outline" size="sm" onClick={run}><RefreshCw size={14} aria-hidden /> {t("mk.rerun")}</Button>
+          <Button variant="outline" size="sm" onClick={() => run(true)}><RefreshCw size={14} aria-hidden /> {t("mk.rerun")}</Button>
         </div>
         <ol className="mt-4 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
           {S.map((s) => (

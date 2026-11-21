@@ -114,6 +114,7 @@ def text_of(msg) -> str:
 
 def call(*, model=None, messages, system=None, max_tokens=4000, cache=False, tag="", budget_s=240) -> tuple[str, float]:
     """Returns (text, usd). Raises the last API error if the time budget runs out."""
+    check_budget()
     model = model or CHAT_MODEL
     req = {"model": model, "max_tokens": max_tokens, "messages": messages}
     if system:
@@ -179,3 +180,31 @@ def month_usage(user: str) -> dict:
     calls = {"test": sum(r[1] for r in rows if r[0].startswith("test")),
              "talk": sum(r[1] for r in rows if r[0].startswith("talk"))}
     return {"month_usd": round(float(usd), 4), "calls": calls}
+
+
+# ----------------------------------------------------------------------------- spend guard
+MONTHLY_BUDGET_USD = float(os.getenv("MONTHLY_BUDGET_USD", "150"))   # per user; 0 disables the guard
+_budget_seen: dict[str, tuple[float, float]] = {}                    # user -> (checked_at, month_usd)
+
+
+class BudgetExceeded(RuntimeError):
+    pass
+
+
+def check_budget(user: str | None = None):
+    """Refuse new paid work once a user's spend this month reaches MONTHLY_BUDGET_USD. Cached for 60 s per
+    process so a burst of calls costs one query. No database (the Daytona worker) means no guard there:
+    the worker only runs for a test that already passed this check when it was created."""
+    user = user or current_user.get()
+    if MONTHLY_BUDGET_USD <= 0 or not user or user == "system" or not os.getenv("DATABASE_URL"):
+        return
+    now = time.time()
+    at, usd = _budget_seen.get(user, (0.0, 0.0))
+    if now - at > 60:
+        try:
+            usd = month_usage(user)["month_usd"]
+        except Exception:  # noqa: BLE001 - never block on a failed lookup
+            return
+        _budget_seen[user] = (now, usd)
+    if usd >= MONTHLY_BUDGET_USD:
+        raise BudgetExceeded(f"Monthly spending limit (${MONTHLY_BUDGET_USD:.0f}) reached. Ask an admin to raise it.")

@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData

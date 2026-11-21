@@ -6,13 +6,13 @@
       "excludeFiles": "{frontend,samples,data,cache,reports,docs,scripts,node_modules,.venv}/**"
     }
   },
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index"
-    }
-  ],
   "regions": [
     "hnd1"
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/index"
+    }
   ]
 }

@@ -24,7 +24,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import anthropic  # noqa: E402
 from sqlmodel import delete, func, select, update  # noqa: E402
 
-from backend.db import engine, session  # noqa: E402
+from backend.db import session  # noqa: E402
 from core import persona_bank as pb  # noqa: E402
 from core.persona_bank import PersonaBank, PersonaBankBatch, PersonaBankJob  # noqa: E402
 

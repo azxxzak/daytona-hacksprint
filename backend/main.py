@@ -1,14 +1,12 @@
 """AdLens API. Run: .venv/bin/uvicorn backend.main:app --port 8000"""
-import base64
 import hashlib
 import json
 import logging
 import os
 import re
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 from dotenv import load_dotenv
@@ -39,6 +37,27 @@ db.init()
 _PUBLIC_DOCS = not os.getenv("VERCEL")  # API docs only in local development, never on the public deployment
 app = FastAPI(title="AdLens API", docs_url="/api/docs" if _PUBLIC_DOCS else None, redoc_url=None,
               openapi_url="/api/openapi.json" if _PUBLIC_DOCS else None)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    if request.url.path.startswith("/api/auth"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
+
+
+@app.exception_handler(llm.BudgetExceeded)
+async def _over_budget(request: Request, exc: llm.BudgetExceeded):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=402, content={"detail": str(exc)})
+
+
+MAX_TESTS_PER_DAY = int(os.getenv("MAX_TESTS_PER_DAY", "40"))
+MAX_TALK_MESSAGES = 200
 
 
 @app.middleware("http")
@@ -75,7 +94,9 @@ def register_portraits(personas: list[dict]):
     """Personas that are not in the bank/library get an index file so their portrait can be drawn later."""
     for p in personas:
         if not (p.get("source_id") or p.get("library_id")):
-            (avatars.CACHE / f"{avatars.key(p)}.json").write_text(json.dumps(p, ensure_ascii=False, default=str))
+            # only what the portrait prompt uses: no customer CSV columns land in the shared folder
+            slim = {k: p.get(k) for k in ("age", "gender", "occupation", "region", "interests")}
+            (avatars.CACHE / f"{avatars.key(p)}.json").write_text(json.dumps(slim, ensure_ascii=False, default=str))
 
 
 def persona_out(p: dict, with_deep=False) -> dict:
@@ -348,6 +369,21 @@ def create_test(body: NewTestIn, user: User = auth.CurrentUser):
     if not SPath(media_key).exists():
         raise HTTPException(400, "The upload did not finish. Upload the file again.")
     lang = "en" if body.lang == "en" else "ja"
+    llm.check_budget(user.email)
+    with db.session() as s:
+        from sqlalchemy import func
+        since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today = s.exec(select(func.count()).select_from(Test).where(Test.owner == user.email,
+                                                                    Test.created_at >= since)).one()
+        running = s.exec(select(Test).where(Test.owner == user.email, Test.status.in_(("queued", "running")))).all()
+    if today >= MAX_TESTS_PER_DAY:
+        raise HTTPException(429, f"Daily limit of {MAX_TESTS_PER_DAY} tests reached. Try again tomorrow.")
+    # one test at a time per account: refresh the running ones first (a finished worker frees the slot)
+    fresh = datetime.now(timezone.utc) - timedelta(minutes=40)   # a test stuck without a worker never blocks for ever
+    busy = [x for x in (worker_ctl.poll(x) for x in running)
+            if x.status in ("queued", "running") and x.created_at.replace(tzinfo=x.created_at.tzinfo or timezone.utc) > fresh]
+    if busy:
+        raise HTTPException(409, "A test is already running on this account. Wait for it to finish, then start the next.")
     personas = _panel_from(body, user)
     register_portraits(personas)
     token = localize.LANG.set(lang)  # the panel is written in the test's language (bank: stored English profiles)
@@ -615,6 +651,9 @@ def ask_talk(test_id: str, talk_id: str, body: TalkAskIn, user: User = auth.Curr
         question = (body.message or "").strip()[:2000]
     if not question:
         raise HTTPException(400, "Write a question first." if not body.use_suggestion else "No suggested question yet.")
+    if len(talk.get("messages") or []) >= MAX_TALK_MESSAGES:
+        raise HTTPException(409, "This conversation is full. Start a new one.")
+    llm.check_budget(user.email)
     r = _result(t)
     by_id = {p["id"]: p for p in r["personas"]}
     members = [by_id[i] for i in talk["persona_ids"] if i in by_id]
@@ -703,10 +742,10 @@ def get_library_persona(pid: str, user: User = auth.CurrentUser):
     return persona_out(localize.persona(p))
 
 
-def _global_persona(pid: str, user: User) -> tuple[dict, str]:
+def _global_persona(pid: str, user: User) -> tuple[dict, str, SPath | None]:
     """lib_*/bank_* -> library or bank persona (in the UI language); '<test_id>:<persona_id>' -> a viewer of one of
-    the user's tests (in that test's language). Returns (persona, language)."""
-    lang = localize.lang()
+    the user's tests (in that test's language). Returns (persona, language, private folder for its deep profile)."""
+    lang, base = localize.lang(), None
     if pid.startswith(("lib_", "bank_")):
         p = _persona_by_source(pid)
         if p:
@@ -715,7 +754,7 @@ def _global_persona(pid: str, user: User) -> tuple[dict, str]:
     elif ":" in pid:
         test_id, local = pid.split(":", 1)
         t = own_test(test_id, user)
-        lang = t.lang or "ja"
+        lang, base = t.lang or "ja", db.test_dir(t.id) / "profiles"
         r = _result(t)
         p = next((x for x in r["personas"] if x["id"] == local), None)
     else:
@@ -725,25 +764,25 @@ def _global_persona(pid: str, user: User) -> tuple[dict, str]:
     if not p.get("profile"):
         llm.current_user.set(user.email)
         persona_profile.ensure_profiles([p], lang=lang)
-    return p, lang
+    return p, lang, base
 
 
 @app.get("/api/personas/{pid}/deep")
 def get_deep(pid: str, user: User = auth.CurrentUser):
-    p, lang = _global_persona(pid, user)
-    status = persona_profile.deep_status(p, lang)
-    md = persona_profile.deep_path(p, lang).read_text() if status == "ready" else None
+    p, lang, base = _global_persona(pid, user)
+    status = persona_profile.deep_status(p, lang, base)
+    md = persona_profile.deep_path(p, lang, base).read_text() if status == "ready" else None
     return {"status": status, "markdown": md}
 
 
 @app.post("/api/personas/{pid}/deep")
 def make_deep(pid: str, user: User = auth.CurrentUser):
     """Writes the long profile inside the request (serverless: no background work) and returns it."""
-    p, lang = _global_persona(pid, user)
-    if persona_profile.deep_status(p, lang) != "ready":
+    p, lang, base = _global_persona(pid, user)
+    if persona_profile.deep_status(p, lang, base) != "ready":
         llm.current_user.set(user.email)
         try:
-            persona_profile.generate_deep(p, lang)
+            persona_profile.generate_deep(p, lang, base)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"The full profile could not be written: {str(e)[:120]}") from None
     return get_deep(pid, user)

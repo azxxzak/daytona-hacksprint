@@ -62,6 +62,8 @@ def generate_one(p: dict) -> bytes:
     hit = cached(p)
     if hit:
         return hit
+    from core import llm
+    llm.check_budget()
     from openai import OpenAI
     r = OpenAI().images.generate(model=IMAGE_MODEL, prompt=_prompt(p), size="1024x1024", quality=IMAGE_QUALITY, n=1)
     jpg = _thumb(base64.b64decode(r.data[0].b64_json))
