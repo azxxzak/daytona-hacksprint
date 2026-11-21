@@ -372,11 +372,11 @@ export function NewTest() {
           {/* STEP 1 */}
           <section aria-labelledby="step1">
             <div id="step1"><StepHead n={1} title={t("new.step1")} /></div>
-            <div role="radiogroup" aria-label={t("new.src")} className="mt-6 inline-flex max-w-full flex-wrap gap-1 rounded-full bg-surface p-1">
+            <div role="radiogroup" aria-label={t("new.src")} className="mt-6 grid w-full grid-cols-3 gap-1 rounded-[14px] bg-surface p-1 sm:inline-grid sm:w-auto sm:rounded-full">
               {([["bank", "new.srcBank"], ["library", "new.srcLibrary"], ["csv", "new.srcCsv"]] as const).map(([k, label]) => (
                 <button
                   key={k} type="button" role="radio" aria-checked={source === k} onClick={() => setSource(k)}
-                  className={cx("h-9 rounded-full px-4 text-[13px] font-medium transition-colors", source === k ? "bg-ink text-white" : "text-mute hover:text-ink")}
+                  className={cx("min-h-9 rounded-[10px] px-2 py-1.5 text-[13px] font-medium leading-tight transition-colors sm:rounded-full sm:px-4", source === k ? "bg-ink text-white" : "text-mute hover:text-ink")}
                 >
                   {t(label)}
                 </button>

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import remarkGfm from "remark-gfm";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, FileText, Loader2, MessageCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Loader2, MessageCircle, Minus, Plus, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import type { Key } from "@/lib/i18n";
@@ -26,8 +26,40 @@ function Chips({ items, tone }: { items: string[]; tone?: "dark" }) {
   );
 }
 
-function H({ children }: { children: ReactNode }) {
-  return <h3 className="mt-8 border-b-2 border-ink pb-2 text-sm font-bold">{children}</h3>;
+function H({ children, first }: { children: ReactNode; first?: boolean }) {
+  return <h3 className={cx("text-[11px] font-semibold uppercase tracking-[0.14em] text-mute", first ? "mt-0" : "mt-9")}>{children}</h3>;
+}
+
+/** Long-form list (drivers, barriers, values): one item per row with a small marker, text wraps freely. */
+function Points({ items, tone }: { items: string[]; tone: "plus" | "minus" | "num" }) {
+  if (!items.length) return null;
+  return (
+    <ul className="mt-3 space-y-2">
+      {items.map((x, i) => (
+        <li key={`${i}-${x}`} className="grid grid-cols-[1.5rem_1fr] gap-2.5 text-sm leading-relaxed">
+          <span
+            aria-hidden
+            className={cx(
+              "tnum mt-0.5 grid size-5 place-items-center rounded-full text-[11px] font-bold",
+              tone === "plus" ? "bg-lime text-ink" : tone === "minus" ? "bg-ink/[0.07] text-ink/60" : "bg-ink text-white",
+            )}
+          >
+            {tone === "plus" ? <Plus size={11} strokeWidth={3} /> : tone === "minus" ? <Minus size={11} strokeWidth={3} /> : i + 1}
+          </span>
+          <span>{x}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Pane({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-card border border-line bg-surface p-4">
+      <p className="text-xs font-semibold">{title}</p>
+      {children}
+    </div>
+  );
 }
 
 const BIG5: { k: keyof Profile["big_five"]; label: Key }[] = [
@@ -42,55 +74,98 @@ function ProfileBody({ profile }: { profile: Profile }) {
   const { t } = useI18n();
   const basics: [Key, string][] = [["pf.household", profile.household], ["pf.income", profile.income], ["pf.region", profile.region]];
   return (
-    <div>
-      <H>{t("pf.basic")}</H>
-      <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-        {basics.map(([k, v]) => v ? <div key={k}><dt className="text-xs text-mute">{t(k)}</dt><dd>{v}</dd></div> : null)}
+    <div className="mt-8">
+      <H first>{t("pf.basic")}</H>
+      <dl className="mt-3 divide-y divide-line rounded-card bg-canvas px-4">
+        {basics.map(([k, v]) => v ? (
+          <div key={k} className="grid grid-cols-1 gap-0.5 py-3 sm:grid-cols-[6.5rem_1fr] sm:gap-4">
+            <dt className="text-xs font-medium text-mute sm:pt-px">{t(k)}</dt>
+            <dd className="text-sm leading-relaxed">{v}</dd>
+          </div>
+        ) : null)}
       </dl>
-      {profile.daily_life && (<><H>{t("pf.daily")}</H><p className="mt-3 text-sm leading-relaxed">{profile.daily_life}</p></>)}
-      {profile.media?.length > 0 && (<><H>{t("pf.media")}</H><ul className="mt-3 space-y-1.5 text-sm">{profile.media.map((m) => <li key={m} className="flex gap-2"><span aria-hidden className="mt-2 size-1 shrink-0 rounded-full bg-ink" />{m}</li>)}</ul></>)}
-      {profile.ad_attitude && (<><H>{t("pf.ads")}</H><p className="mt-3 text-sm leading-relaxed">{profile.ad_attitude}</p></>)}
-      <H>{`${t("pf.drivers")} / ${t("pf.barriers")}`}</H>
-      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div><p className="mb-1.5 text-xs text-mute">{t("pf.drivers")}</p><Chips items={profile.purchase_drivers ?? []} tone="dark" /></div>
-        <div><p className="mb-1.5 text-xs text-mute">{t("pf.barriers")}</p><Chips items={profile.purchase_barriers ?? []} /></div>
-      </div>
-      <H>{t("pf.values")}</H>
-      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div><p className="mb-1.5 text-xs text-mute">{t("pf.valuesTop")}</p><Chips items={profile.values_top ?? []} tone="dark" /></div>
-        <div><p className="mb-1.5 text-xs text-mute">{t("pf.valuesLow")}</p><Chips items={profile.values_low ?? []} /></div>
-      </div>
-      {profile.big_five && (
+
+      {profile.daily_life && (<><H>{t("pf.daily")}</H><p className="mt-3 text-[15px] leading-[1.8]">{profile.daily_life}</p></>)}
+
+      {profile.ad_attitude && (
         <>
-          <H>{t("pf.bigFive")}</H>
-          <ul className="mt-3 space-y-2.5">
-            {BIG5.map(({ k, label }) => {
-              const v = Math.max(0, Math.min(100, profile.big_five[k] ?? 0));
+          <H>{t("pf.ads")}</H>
+          <p className="mt-3 rounded-card border-l-[3px] border-ink bg-canvas px-4 py-3 text-sm leading-relaxed">{profile.ad_attitude}</p>
+        </>
+      )}
+
+      {profile.media?.length > 0 && (
+        <>
+          <H>{t("pf.media")}</H>
+          <ul className="mt-3 divide-y divide-line rounded-card border border-line">
+            {profile.media.map((m) => {
+              const i = m.search(/[:：]/);
+              const name = i > 0 && i < 32 ? m.slice(0, i).trim() : "";
+              const how = name ? m.slice(i + 1).trim() : m;
               return (
-                <li key={k} className="grid grid-cols-[6.5rem_1fr_2rem] items-center gap-3 text-xs">
-                  <span className="truncate text-mute">{t(label)}</span>
-                  <div className="h-1 rounded-full bg-line" role="img" aria-label={`${t(label)} ${v}`}>
-                    <div className="h-full rounded-full bg-lime" style={{ width: `${v}%` }} />
-                  </div>
-                  <span className="tnum text-right">{v}</span>
+                <li key={m} className="grid grid-cols-1 gap-0.5 px-4 py-3 text-sm sm:grid-cols-[8.5rem_1fr] sm:gap-4">
+                  {name && <span className="font-semibold">{name}</span>}
+                  <span className={cx("leading-relaxed", name && "text-ink/80")}>{how}</span>
                 </li>
               );
             })}
           </ul>
         </>
       )}
-      {profile.speech_style && (<><H>{t("pf.speech")}</H><p className="mt-3 text-sm leading-relaxed">{profile.speech_style}</p></>)}
+
+      <H>{`${t("pf.drivers")} / ${t("pf.barriers")}`}</H>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Pane title={t("pf.drivers")}><Points items={profile.purchase_drivers ?? []} tone="plus" /></Pane>
+        <Pane title={t("pf.barriers")}><Points items={profile.purchase_barriers ?? []} tone="minus" /></Pane>
+      </div>
+
+      <H>{t("pf.values")}</H>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Pane title={t("pf.valuesTop")}><Points items={profile.values_top ?? []} tone="num" /></Pane>
+        <Pane title={t("pf.valuesLow")}><Points items={profile.values_low ?? []} tone="minus" /></Pane>
+      </div>
+
+      {profile.big_five && (
+        <>
+          <H>{t("pf.bigFive")}</H>
+          <ul className="mt-3 space-y-3">
+            {BIG5.map(({ k, label }) => {
+              const v = Math.max(0, Math.min(100, profile.big_five[k] ?? 0));
+              return (
+                <li key={k} className="grid grid-cols-[8.5rem_1fr_2rem] items-center gap-3 text-xs">
+                  <span className="truncate text-ink/80">{t(label)}</span>
+                  <div className="h-1.5 rounded-full bg-canvas" role="img" aria-label={`${t(label)} ${v}`}>
+                    <div className="h-full rounded-full bg-ink" style={{ width: `${v}%` }} />
+                  </div>
+                  <span className="tnum text-right font-semibold">{v}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
+      {profile.speech_style && (
+        <>
+          <H>{t("pf.speech")}</H>
+          <p className="mt-3 text-sm leading-relaxed text-ink/85">{profile.speech_style}</p>
+        </>
+      )}
+
       {profile.insights?.length > 0 && (
         <>
           <H>{t("pf.insights")}</H>
-          <ul className="mt-3 space-y-3">
-            {profile.insights.map((i) => (
-              <li key={i.title} className="rounded-card bg-canvas p-4">
-                <p className="text-sm font-bold">{i.title}</p>
-                <p className="mt-1 text-sm leading-relaxed text-ink/80">{i.body}</p>
+          <ol className="mt-3 space-y-2">
+            {profile.insights.map((i, n) => (
+              <li key={i.title} className="grid grid-cols-[1.5rem_1fr] gap-2.5 rounded-card bg-canvas p-4">
+                <span aria-hidden className="tnum mt-0.5 grid size-5 place-items-center rounded-full bg-ink text-[11px] font-bold text-lime">{n + 1}</span>
+                <div>
+                  <p className="text-sm font-bold leading-snug">{i.title}</p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{i.body}</p>
+                </div>
               </li>
             ))}
-          </ul>
+          </ol>
         </>
       )}
     </div>
@@ -233,27 +308,53 @@ export function PersonaSheet({
           <DeepView markdown={shown.markdown} onBack={() => setView("summary")} />
         ) : (
           <div>
-            <div className="flex items-center gap-4 pr-10">
-              <Avatar src={persona.avatar_url} name={persona.name} color={persona.color} rounded="rounded-full" eager className="size-20 shrink-0" />
+            <header className="flex flex-col gap-4 pr-10 sm:flex-row sm:items-center sm:gap-5">
+              <Avatar src={persona.avatar_url} name={persona.name} color={persona.color} rounded="rounded-2xl" eager className="size-24 shrink-0 sm:size-28" />
               <div className="min-w-0">
-                <h2 className="text-xl font-bold leading-tight">{p?.full_name || persona.name}</h2>
-                <p className="mt-0.5 text-sm text-mute">{p?.meta || meta(persona)}</p>
-                {p?.headline && <p className="mt-1 text-sm font-bold">{p.headline}</p>}
+                <h2 className="text-2xl font-bold leading-tight tracking-tight">{p?.full_name || persona.name}</h2>
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {(p?.meta || meta(persona)).split(/\s*\/\s*/).filter(Boolean).map((m) => (
+                    <li key={m} className="rounded-md bg-canvas px-2 py-0.5 text-xs text-ink/75">{m}</li>
+                  ))}
+                </ul>
+                {p?.headline && <p className="mt-3 text-[15px] font-semibold leading-snug">{p.headline}</p>}
               </div>
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              {actionLabel && onAction && <Button className="flex-1" onClick={() => onAction(persona)}><MessageCircle size={16} aria-hidden /> {actionLabel}</Button>}
-              {p && (
-                shown?.status === "ready" && shown.markdown ? (
-                  <Button variant="outline" className="flex-1" onClick={() => setView("deep")}><FileText size={16} aria-hidden /> {t("pf.deepTitle")}</Button>
-                ) : shown?.status === "generating" ? (
-                  <Button variant="outline" className="flex-1" disabled><Loader2 size={16} className="motion-safe:animate-spin" aria-hidden /> {t("pf.generate")}</Button>
+            </header>
+            {actionLabel && onAction && (
+              <div className="mt-5">
+                <Button className="w-full" onClick={() => onAction(persona)}><MessageCircle size={16} aria-hidden /> {actionLabel}</Button>
+              </div>
+            )}
+            {p && (
+              <section aria-label={t("pf.deepTitle")} className="mt-4 rounded-card bg-ink p-4 text-white">
+                {shown?.status === "ready" && shown.markdown ? (
+                  <button type="button" onClick={() => setView("deep")} className="flex w-full items-center gap-3 text-left">
+                    <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-lime text-ink"><FileText size={16} /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold">{t("pf.deepTitle")}</span>
+                      <span className="block text-xs text-white/65">{t("pf.deepReady")}</span>
+                    </span>
+                    <ArrowRight size={16} aria-hidden />
+                  </button>
                 ) : (
-                  <Button variant="outline" className="flex-1" onClick={generate}><FileText size={16} aria-hidden /> {t("pf.generate")}</Button>
-                )
-              )}
-            </div>
-            {shown?.status === "generating" && <div className="mt-4 rounded-xl bg-canvas p-4"><LongProgress since={since} estimateSec={80} label={t("pf.generating")} /></div>}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-lime text-ink"><Sparkles size={16} /></span>
+                    <div className="min-w-[12rem] flex-1">
+                      <p className="text-sm font-bold">{t("pf.deepTitle")}</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-white/65">{t("pf.deepDesc")}</p>
+                    </div>
+                    <button
+                      type="button" onClick={generate} disabled={shown?.status === "generating"}
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-white px-4 text-sm font-semibold text-ink transition-colors hover:bg-lime disabled:opacity-60"
+                    >
+                      {shown?.status === "generating" ? <Loader2 size={15} className="motion-safe:animate-spin" aria-hidden /> : null}
+                      {shown?.status === "generating" ? t("pf.generatingShort") : t("pf.generate")}
+                    </button>
+                  </div>
+                )}
+                {shown?.status === "generating" && <div className="mt-4 rounded-xl bg-white/10 p-3 [&_*]:!text-white"><LongProgress since={since} estimateSec={80} label={t("pf.generating")} /></div>}
+              </section>
+            )}
             {p ? <ProfileBody profile={p} /> : <CompactProfile persona={persona} />}
             {children}
           </div>
