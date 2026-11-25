@@ -120,6 +120,8 @@ export type Test = TestSummary & {
   /** shared link: nothing can be changed or generated (no sign-in, no spend) */
   read_only?: boolean;
   share_token?: string | null;
+  /** which map is in frames[].heat: "unisal" = trained attention model, "spectral" = old contrast map */
+  heat_model?: "unisal" | "spectral";
   /** A/B: this test reused the exact panel of that test */
   panel_from?: string | null;
 };

@@ -2,13 +2,16 @@
 
 Usage: python analyze_video.py <input video/image> <output json>
 
-Samples frames at ~2 fps, computes a spectral-residual saliency map per frame
-(Hou & Zhang 2007) with a mild center bias, and writes a small JSON grid per
-frame plus a few keyframe JPEGs for the persona-gaze step.
+Samples frames at ~2 fps and writes a small attention grid per frame plus a few keyframe JPEGs for the
+persona-gaze step. The grid comes from the trained saliency model (UNISAL, core/attention.py) when its ONNX
+files are present (ATTENTION_MODEL_DIR, baked into the worker snapshot); otherwise from a spectral-residual
+map (Hou & Zhang 2007) with a mild centre bias, which is much weaker (see scripts/saliency_benchmark.py).
 """
 import base64
 import json
+import os
 import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -18,6 +21,54 @@ SAMPLE_FPS = 2.0
 MAX_FRAMES = 240          # 3-min video -> one heatmap every ~0.75 s
 KEYFRAME_EVERY_S = 10     # persona gaze sampled every 10 s
 MIN_KEYFRAMES, MAX_KEYFRAMES = 6, 18
+MODEL_DIR = os.getenv("ATTENTION_MODEL_DIR", "/home/daytona/models")
+MODEL_MAX_FRAMES = 540    # CPU budget for the video model (~6 fps for 90 s, fewer per second for longer ads)
+
+
+def _grid(m: np.ndarray) -> np.ndarray:
+    g = cv2.resize(m.astype(np.float32), (GRID_W, GRID_H), interpolation=cv2.INTER_AREA)
+    g -= g.min()
+    return g / (g.max() + 1e-8)
+
+
+def load_model():
+    if os.getenv("ATTENTION_MODEL", "unisal") != "unisal" or not Path(MODEL_DIR, "unisal_image.onnx").exists():
+        return None
+    try:
+        from core.attention import Model
+    except ImportError:   # run as a plain script next to attention.py
+        from attention import Model
+    try:
+        return Model(MODEL_DIR)
+    except Exception as e:  # noqa: BLE001 - never fail a test because of the model
+        print("attention model unavailable:", e)
+        return None
+
+
+def model_maps(model, path: str, duration: float) -> list[tuple[float, np.ndarray]]:
+    """Run the video model over the clip at up to 6 fps (state carried frame to frame) -> [(t, grid)]."""
+    try:
+        from core import attention as from_core
+    except ImportError:
+        import attention as from_core
+    fps_want = min(from_core.VIDEO_FPS, MODEL_MAX_FRAMES / max(duration, 1e-6))
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    step = max(1, int(round(fps / fps_want)))
+    state = np.zeros(from_core.STATE_SHAPE, dtype=np.float32)
+    out, idx = [], 0
+    while True:
+        ok = cap.grab()
+        if not ok:
+            break
+        if idx % step == 0:
+            ok, frame = cap.retrieve()
+            if ok:
+                s, state = model.vid.run(None, {"frame": from_core._prep(frame, from_core.VIDEO_SIZE), "state": state})
+                out.append((idx / fps, _grid(s[0])))
+        idx += 1
+    cap.release()
+    return out
 
 
 def transcribe(src: str) -> list:
@@ -120,9 +171,21 @@ def main(src: str, out: str):
     h, w = frames[0][1].shape[:2]
 
     result = {"width": w, "height": h, "duration": duration,
-              "grid": [GRID_W, GRID_H], "frames": [], "keyframes": []}
+              "grid": [GRID_W, GRID_H], "frames": [], "keyframes": [], "heat_model": "spectral"}
+    model, mmaps = load_model(), []
+    if model is not None:
+        try:
+            if duration > 0 and model.vid is not None:
+                mmaps = model_maps(model, src, duration)
+            else:
+                mmaps = [(t, _grid(model.image(f))) for t, f in frames]
+            result["heat_model"] = "unisal"
+        except Exception as e:  # noqa: BLE001 - fall back to the spectral map
+            print("attention model failed:", e)
+            mmaps = []
+    mtimes = np.array([t for t, _ in mmaps]) if mmaps else None
     for t, frame in frames:
-        sal = saliency(frame)
+        sal = mmaps[int(np.abs(mtimes - t).argmin())][1] if mmaps else saliency(frame)
         peak = np.unravel_index(np.argmax(sal), sal.shape)
         result["frames"].append({
             "t": round(t, 3),
@@ -145,7 +208,7 @@ def main(src: str, out: str):
 
     with open(out, "w") as fh:
         json.dump(result, fh, ensure_ascii=False)
-    print(f"ok frames={len(result['frames'])} keyframes={len(result['keyframes'])}")
+    print(f"ok frames={len(result['frames'])} keyframes={len(result['keyframes'])} heat={result['heat_model']}")
     if duration > 0:
         proxy = out.rsplit("/", 1)[0] + "/proxy.mp4" if "/" in out else "proxy.mp4"
         print("proxy", "ok" if make_proxy(src, proxy) else "failed")

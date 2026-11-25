@@ -11,3 +11,6 @@ reports/
 data/
 .vercel
 .env*.local
+
+# saliency model tooling (venv, downloaded weights, benchmark data)
+.saliency/

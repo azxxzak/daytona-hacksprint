@@ -61,7 +61,9 @@ type Row = { p: Persona; g: Gaze };
 export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
   const { t, lang } = useI18n();
   const isVideo = test.media_kind === "video";
-  const [mode, setMode] = useState<HeatMode>("ai");
+  // trained attention model (benchmarked against real eye-tracking) vs the old contrast map of earlier tests
+  const trained = test.heat_model === "unisal";
+  const [mode, setMode] = useState<HeatMode>(trained ? "img" : "ai");
   const [seg, setSeg] = useState<SegmentKey>("all");
   const [faces, setFaces] = useState(true);
   const [playing, setPlaying] = useState(false);
@@ -207,7 +209,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
         const d = img.data;
         for (let i = 0; i < GW * GH; i++) {
           const s = (heat[i] ?? 0) / 255;
-          const v = m === "img" ? s : m === "ai" ? pheat[i] : 0.7 * pheat[i] + 0.3 * s;
+          const v = m === "img" ? s : m === "ai" ? pheat[i] : trained ? 0.25 * pheat[i] + 0.75 * s : 0.7 * pheat[i] + 0.3 * s;
           const k = Math.min(255, Math.max(0, Math.round(v * 255))) * 3;
           d[i * 4] = JET[k]; d[i * 4 + 1] = JET[k + 1]; d[i * 4 + 2] = JET[k + 2];
           d[i * 4 + 3] = v > 0.35 ? v * 170 : 0;
@@ -256,7 +258,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
       media.removeEventListener("load", wake);
       window.removeEventListener("resize", wake);
     };
-  }, [test.grid, test.frames, test.transcript, tracks, isVideo]);
+  }, [test.grid, test.frames, test.transcript, tracks, isVideo, trained]);
 
   const avg = rows.length ? rows.reduce((s, r) => s + r.g.interest, 0) / rows.length : 0;
   const ratio = test.width && test.height ? test.width / test.height : 16 / 9;
@@ -274,17 +276,26 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
         <label className="flex items-center gap-2 text-mute">
           {t("pl.heat")}
           <select value={mode} onChange={(e) => setMode(e.target.value as HeatMode)} className={cx(sel, "text-ink")}>
+            {trained && <option value="img">{t("pl.model")}</option>}
             <option value="ai">{t("pl.ai")}</option>
-            <option value="mix">{t("pl.mix")}</option>
-            <option value="img">{t("pl.img")}</option>
+            <option value="mix">{trained ? t("pl.mixModel") : t("pl.mix")}</option>
+            {!trained && <option value="img">{t("pl.img")}</option>}
             <option value="off">{t("pl.off")}</option>
           </select>
+          <span
+            tabIndex={0} role="img" aria-label={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")} title={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}
+            className="grid size-5 cursor-help place-items-center rounded-full border border-line text-[11px] font-semibold text-mute"
+          >i</span>
         </label>
         <label className="flex items-center gap-2 text-mute">
           {t("pl.who")}
           <select value={seg} onChange={(e) => setSeg(e.target.value as SegmentKey)} className={cx(sel, "text-ink")}>
             {SEGMENTS.map((s) => <option key={s.key} value={s.key}>{t(s.label)}</option>)}
           </select>
+          <span
+            tabIndex={0} role="img" aria-label={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")} title={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}
+            className="grid size-5 cursor-help place-items-center rounded-full border border-line text-[11px] font-semibold text-mute"
+          >i</span>
         </label>
         <button
           type="button" aria-pressed={faces} onClick={() => setFaces((f) => !f)}

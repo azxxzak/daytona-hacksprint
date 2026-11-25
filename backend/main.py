@@ -467,6 +467,7 @@ def _test_out(t: Test) -> dict:
         out.update(duration=a.get("duration", 0), width=a.get("width", 0), height=a.get("height", 0),
                    grid=a.get("grid", [48, 27]), frames=[{"t": x["t"], "heat": x["heat"]} for x in a["frames"]],
                    transcript=a.get("transcript", []), personas=[persona_out(p) for p in r["personas"]],
+                   heat_model=a.get("heat_model", "spectral"),
                    gaze=[{**g, "thought_en": g.get("thought_en", "")} for g in r["gaze"]], summary=r["summary"],
                    themes=r.get("themes"))
     elif t.status in ("queued", "running"):

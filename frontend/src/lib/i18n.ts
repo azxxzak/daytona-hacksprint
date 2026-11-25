@@ -114,9 +114,9 @@ const en = {
 
   // player
   "pl.heat": "Heatmap",
-  "pl.ai": "AI viewers' gaze",
+  "pl.ai": "AI personas' focus",
   "pl.mix": "AI + image 70:30",
-  "pl.img": "Image only",
+  "pl.img": "Basic contrast map",
   "pl.off": "Off",
   "pl.who": "Segment",
   "pl.all": "Everyone",
@@ -530,6 +530,10 @@ const en = {
   "cmp.empty": "Choose two finished tests to compare.",
   "cmp.fewPeople": "Fewer than 5 people in this group: too few to read much into.",
   "cmp.tooFew": "Too few viewers on one side to measure the difference.",
+  "pl.model": "Predicted attention (trained model)",
+  "pl.mixModel": "Model + AI personas",
+  "pl.heatInfoModel": "Predicted attention comes from UNISAL, a saliency model trained on real eye-tracking. On 200 MIT1003 images it matched where 15 real people looked at CC 0.70 (the old map: 0.38). The AI personas' own points match at 0.49: use them for reasons, not for exact gaze.",
+  "pl.heatInfoOld": "This older test used a basic contrast map, which matches real eye-tracking poorly (CC 0.38 on MIT1003). New tests use a trained attention model (CC 0.70).",
 } as const;
 
 export type Key = keyof typeof en;
@@ -639,9 +643,9 @@ const ja: Record<Key, string> = {
   "rep.lowLabel": "最も下がった時点",
 
   "pl.heat": "ヒートマップ",
-  "pl.ai": "AIビューアーの視線",
+  "pl.ai": "AIペルソナの注目点",
   "pl.mix": "AI＋画像 70:30",
-  "pl.img": "画像のみ",
+  "pl.img": "簡易コントラストマップ",
   "pl.off": "オフ",
   "pl.who": "対象",
   "pl.all": "全員",
@@ -1052,6 +1056,10 @@ const ja: Record<Key, string> = {
   "cmp.empty": "比較する完了済みテストを2つ選んでください。",
   "cmp.fewPeople": "このグループは5人未満のため、差を読み取るには少なすぎます。",
   "cmp.tooFew": "片方の視聴者が少なすぎるため、差を測定できません。",
+  "pl.model": "予測注視（学習済みモデル）",
+  "pl.mixModel": "モデル＋AIペルソナ",
+  "pl.heatInfoModel": "予測注視は、実際の視線計測データで学習したサリエンシーモデルUNISALによるものです。MIT1003の200枚では、実際の15人が見た場所との一致度がCC 0.70でした（旧マップは0.38）。AIペルソナ自身の視点は0.49のため、正確な視線ではなく理由の把握に使ってください。",
+  "pl.heatInfoOld": "この過去のテストは簡易コントラストマップを使っており、実際の視線計測との一致度は低め（MIT1003でCC 0.38）です。新しいテストでは学習済み注視モデル（CC 0.70）を使います。",
 };
 
 export const dictionaries: Record<Lang, Record<Key, string>> = { en, ja };

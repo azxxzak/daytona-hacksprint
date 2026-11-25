@@ -20,9 +20,9 @@ from core.store import SPath
 
 log = logging.getLogger("adlens.worker")
 ROOT = Path(__file__).resolve().parent.parent
-SNAPSHOT = os.getenv("WORKER_SNAPSHOT", "adlens-worker-v1")
+SNAPSHOT = os.getenv("WORKER_SNAPSHOT", "adlens-worker-v2")   # v2: UNISAL attention model baked in
 JOB_DIR = "/home/daytona/job"
-WORKER_FILES = ["core/__init__.py", "core/analyze_video.py", "core/gaze.py", "core/llm.py", "core/personas.py",
+WORKER_FILES = ["core/__init__.py", "core/analyze_video.py", "core/attention.py", "core/gaze.py", "core/llm.py", "core/personas.py",
                 "core/persona_profile.py", "core/themes.py", "core/store.py", "core/summary.py", "core/worker.py"]
 POLL_EVERY_S = 2.0
 TIMEOUT_S = 25 * 60
