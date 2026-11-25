@@ -292,10 +292,6 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
           <select value={seg} onChange={(e) => setSeg(e.target.value as SegmentKey)} className={cx(sel, "text-ink")}>
             {SEGMENTS.map((s) => <option key={s.key} value={s.key}>{t(s.label)}</option>)}
           </select>
-          <span
-            tabIndex={0} role="img" aria-label={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")} title={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}
-            className="grid size-5 cursor-help place-items-center rounded-full border border-line text-[11px] font-semibold text-mute"
-          >i</span>
         </label>
         <button
           type="button" aria-pressed={faces} onClick={() => setFaces((f) => !f)}
