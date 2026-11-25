@@ -9,9 +9,10 @@ import { EvidenceLabel } from "../evidence";
 import { cx } from "../ui";
 
 export type PlayerHandle = { seek: (t: number) => void };
-type HeatMode = "ai" | "mix" | "img" | "off";
 
-const SIGMA = 2.6; // Gaussian spread of one viewer's gaze, in grid cells
+const JUMP_S = 0.22;     // a viewer's eyes jump to the next keyframe spot this fast (saccade-like), then hold
+const FOLLOW_CELLS = 7;  // between keyframes a face follows the attention hotspot nearest its spot (grid cells)
+const SNAP_MS = 70;      // time constant of that follow: quick hops, not a slow drift
 const SEGMENTS: { key: SegmentKey; label: "pl.all" | "pl.u25" | "pl.a25" | "pl.a35" | "pl.a45" | "pl.women" | "pl.men" }[] = [
   { key: "all", label: "pl.all" },
   { key: "a1", label: "pl.u25" },
@@ -38,21 +39,36 @@ const JET = (() => {
 type Pt = { x: number; y: number; interest: number; cur: Gaze };
 
 function gazeAt(track: Gaze[], t: number, out: Pt): Pt {
-  const first = track[0];
-  if (t <= first.t) {
-    out.x = first.x; out.y = first.y; out.cur = first; out.interest = first.interest;
-    return out;
+  // hold each keyframe's spot, then jump to the next one quickly (eyes do not glide)
+  let i = -1;
+  for (let k = 0; k < track.length && track[k].t <= t; k++) i = k;
+  if (i < 0) i = 0;
+  const cur = track[i];
+  out.cur = cur; out.interest = cur.interest;
+  if (i > 0 && t - cur.t < JUMP_S) {
+    const prev = track[i - 1], k = 1 - (1 - (t - cur.t) / JUMP_S) ** 3;
+    out.x = prev.x + (cur.x - prev.x) * k; out.y = prev.y + (cur.y - prev.y) * k;
+  } else {
+    out.x = cur.x; out.y = cur.y;
   }
-  for (let i = 0; i < track.length - 1; i++) {
-    const a = track[i], b = track[i + 1];
-    if (t <= b.t) {
-      const k = (t - a.t) / Math.max(1e-6, b.t - a.t);
-      out.x = a.x + (b.x - a.x) * k; out.y = a.y + (b.y - a.y) * k; out.cur = a; out.interest = a.interest;
-      return out;
-    }
+  return out;
+}
+
+/** Strongest separate peaks of one heat frame, normalised coordinates. */
+function peaks(heat: number[], GW: number, GH: number): [number, number][] {
+  const work = Float32Array.from(heat);
+  let top = 0;
+  for (const v of work) if (v > top) top = v;
+  const out: [number, number][] = [];
+  for (let n = 0; n < 6 && top > 0; n++) {
+    let bi = 0;
+    for (let i = 1; i < work.length; i++) if (work[i] > work[bi]) bi = i;
+    if (work[bi] < 0.35 * top) break;
+    const bx = bi % GW, by = (bi - bx) / GW;
+    out.push([(bx + 0.5) / GW, (by + 0.5) / GH]);
+    for (let y = Math.max(0, by - 4); y <= Math.min(GH - 1, by + 4); y++)
+      for (let x = Math.max(0, bx - 4); x <= Math.min(GW - 1, bx + 4); x++) work[y * GW + x] = 0;
   }
-  const last = track[track.length - 1];
-  out.x = last.x; out.y = last.y; out.cur = last; out.interest = last.interest;
   return out;
 }
 
@@ -63,7 +79,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
   const isVideo = test.media_kind === "video";
   // trained attention model (benchmarked against real eye-tracking) vs the old contrast map of earlier tests
   const trained = test.heat_model === "unisal";
-  const [mode, setMode] = useState<HeatMode>(trained ? "img" : "ai");
+  const [heatOn, setHeatOn] = useState(true);
   const [seg, setSeg] = useState<SegmentKey>("all");
   const [faces, setFaces] = useState(true);
   const [playing, setPlaying] = useState(false);
@@ -77,13 +93,13 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLVideoElement & HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ mode, seg, faces });
+  const live = useRef({ heatOn, seg, faces });
   const dirty = useRef(true);
 
   useEffect(() => {
-    live.current = { mode, seg, faces };
+    live.current = { heatOn, seg, faces };
     dirty.current = true;
-  }, [mode, seg, faces]);
+  }, [heatOn, seg, faces]);
 
   useImperativeHandle(ref, () => ({
     seek(sec: number) {
@@ -124,8 +140,10 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
     off.width = GW; off.height = GH;
     const octx = off.getContext("2d")!;
     const img = octx.createImageData(GW, GH);
-    const pheat = new Float32Array(GW * GH);
     const frames = test.frames;
+    const peakCache = new Map<number, [number, number][]>();
+    const shown = new Map<string, { x: number; y: number }>();   // where each face is drawn now
+    let lastNow = 0, lastSec = 0;
 
     // portraits for the moving faces: pre-rendered as small circles once they load
     const bubbles = new Map<string, HTMLCanvasElement>();
@@ -152,13 +170,26 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
     let lastCaption = "";
     let cw = 0, ch = 0;
 
-    const frameAt = (sec: number) => {
+    const frameIdx = (sec: number) => {
       let lo = 0, hi = frames.length - 1;
       while (lo < hi) {
         const mid = (lo + hi + 1) >> 1;
         if (frames[mid].t <= sec) lo = mid; else hi = mid - 1;
       }
-      return frames[lo];
+      return lo;
+    };
+    const nearest = (pts: [number, number][], x: number, y: number, cells: number) => {
+      let best: [number, number] | null = null, bd = cells * cells;
+      for (const q of pts) {
+        const d2 = ((q[0] - x) * GW) ** 2 + ((q[1] - y) * GH) ** 2;
+        if (d2 < bd) { bd = d2; best = q; }
+      }
+      return best;
+    };
+    const peaksAt = (idx: number) => {
+      let p = peakCache.get(idx);
+      if (!p) { p = peaks(frames[idx].heat, GW, GH); peakCache.set(idx, p); }
+      return p;
     };
 
     const draw = (now: number) => {
@@ -179,37 +210,38 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const { mode: m, seg: sg, faces: showFaces } = live.current;
+      const { heatOn: heatShown, seg: sg, faces: showFaces } = live.current;
+      const fi = frames.length ? frameIdx(sec) : -1;
+      const hot = fi >= 0 ? peaksAt(fi) : [];
+      const seeked = Math.abs(sec - lastSec) > 0.6 || now - lastNow > 400;
+      const kSnap = seeked ? 1 : 1 - Math.exp(-(now - lastNow) / SNAP_MS);
+      lastNow = now; lastSec = sec;
+      let moving = false;
       const active: { p: Persona; pt: Pt; x: number; y: number }[] = [];
       for (const { p, pts } of tracks) {
         if (!inSegment(p, sg)) continue;
         const pt = gazeAt(pts, sec, { ...scratch });
-        active.push({ p, pt, x: pt.x, y: pt.y });
-      }
-
-      if (m !== "off" && frames.length) {
-        pheat.fill(0);
-        let mx = 0;
-        if (m !== "img") {
-          const r = Math.ceil(SIGMA * 3);
-          for (const a of active) {
-            const gx = a.x * GW, gy = a.y * GH, wgt = 0.4 + a.pt.interest / 5;
-            const y0 = Math.max(0, Math.floor(gy - r)), y1 = Math.min(GH, Math.ceil(gy + r));
-            const x0 = Math.max(0, Math.floor(gx - r)), x1 = Math.min(GW, Math.ceil(gx + r));
-            for (let y = y0; y < y1; y++)
-              for (let x = x0; x < x1; x++) {
-                const d2 = (x + 0.5 - gx) ** 2 + (y + 0.5 - gy) ** 2, i = y * GW + x;
-                pheat[i] += wgt * Math.exp(-d2 / (2 * SIGMA * SIGMA));
-                if (pheat[i] > mx) mx = pheat[i];
-              }
-          }
-          if (mx > 0) for (let i = 0; i < pheat.length; i++) pheat[i] /= mx;
+        // between keyframes the face moves with what it looks at: take the model hotspot nearest the persona's
+        // spot at its keyframe, find where that hotspot is now, and shift the persona's own spot by the same amount
+        let tx = pt.x, ty = pt.y;
+        const h0 = nearest(fi >= 0 ? peaksAt(frameIdx(pt.cur.t)) : [], pt.x, pt.y, FOLLOW_CELLS);
+        if (h0) {
+          const h1 = nearest(hot, h0[0], h0[1], FOLLOW_CELLS);
+          if (h1) { tx = Math.min(1, Math.max(0, pt.x + h1[0] - h0[0])); ty = Math.min(1, Math.max(0, pt.y + h1[1] - h0[1])); }
         }
-        const heat = frameAt(sec).heat;
+        const s0 = shown.get(p.id) ?? { x: tx, y: ty };
+        const nx = s0.x + (tx - s0.x) * kSnap, ny = s0.y + (ty - s0.y) * kSnap;
+        if (Math.abs(nx - tx) + Math.abs(ny - ty) > 0.002) moving = true;
+        shown.set(p.id, { x: nx, y: ny });
+        active.push({ p, pt, x: nx, y: ny });
+      }
+      if (moving) dirty.current = true;
+
+      if (heatShown && fi >= 0) {
+        const heat = frames[fi].heat;
         const d = img.data;
         for (let i = 0; i < GW * GH; i++) {
-          const s = (heat[i] ?? 0) / 255;
-          const v = m === "img" ? s : m === "ai" ? pheat[i] : trained ? 0.25 * pheat[i] + 0.75 * s : 0.7 * pheat[i] + 0.3 * s;
+          const v = ((heat[i] ?? 0) / 255) ** 0.7;   // display only: the model's map is peaky, lift its shoulders
           const k = Math.min(255, Math.max(0, Math.round(v * 255))) * 3;
           d[i * 4] = JET[k]; d[i * 4 + 1] = JET[k + 1]; d[i * 4 + 2] = JET[k + 2];
           d[i * 4 + 3] = v > 0.35 ? v * 170 : 0;
@@ -258,7 +290,7 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
       media.removeEventListener("load", wake);
       window.removeEventListener("resize", wake);
     };
-  }, [test.grid, test.frames, test.transcript, tracks, isVideo, trained]);
+  }, [test.grid, test.frames, test.transcript, tracks, isVideo]);
 
   const avg = rows.length ? rows.reduce((s, r) => s + r.g.interest, 0) / rows.length : 0;
   const ratio = test.width && test.height ? test.width / test.height : 16 / 9;
@@ -273,20 +305,18 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
   return (
     <section aria-label={t("pl.stage")}>
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
-        <label className="flex items-center gap-2 text-mute">
-          {t("pl.heat")}
-          <select value={mode} onChange={(e) => setMode(e.target.value as HeatMode)} className={cx(sel, "text-ink")}>
-            {trained && <option value="img">{t("pl.model")}</option>}
-            <option value="ai">{t("pl.ai")}</option>
-            <option value="mix">{trained ? t("pl.mixModel") : t("pl.mix")}</option>
-            {!trained && <option value="img">{t("pl.img")}</option>}
-            <option value="off">{t("pl.off")}</option>
-          </select>
+        <span className="flex items-center gap-2">
+          <button
+            type="button" aria-pressed={heatOn} onClick={() => setHeatOn((v) => !v)}
+            className={cx("h-9 rounded-full border px-4 font-medium transition-colors", heatOn ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:text-ink")}
+          >
+            {t("pl.heat")}
+          </button>
           <span
             tabIndex={0} role="img" aria-label={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")} title={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}
             className="grid size-5 cursor-help place-items-center rounded-full border border-line text-[11px] font-semibold text-mute"
           >i</span>
-        </label>
+        </span>
         <label className="flex items-center gap-2 text-mute">
           {t("pl.who")}
           <select value={seg} onChange={(e) => setSeg(e.target.value as SegmentKey)} className={cx(sel, "text-ink")}>
