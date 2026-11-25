@@ -20,6 +20,14 @@ EVIDENCE = """Also say what each reaction rests on:
   "invented" if nothing in the profile supports it.
 - "because": at most 60 characters ({language}) naming that fact or reason."""
 
+HOTSPOTS = """
+Where real viewers' eyes usually go in this frame, from an eye-tracking model trained on real people
+(strongest first, relative strength): {spots}.
+Use this as the base rate: most people look at one of these spots first. For each persona pick the spot that
+fits them, or another place only if their interests or the speech clearly pull them there. Spread the panel
+over the spots roughly by strength; do not send everyone to the same point. Name what is there in "looking_at".
+"""
+
 PROMPT = """You simulate a consumer research panel watching an advertisement.
 This is the frame at t={t:.1f}s{context}.
 {speech}
@@ -27,7 +35,7 @@ For EACH persona below, predict realistically where their eyes land first in thi
 how interested they are, and {thought_rule}
 Different people notice different things (price, faces, product, text, logo, background).
 If speech is given, react to the actual words too (a catchphrase, a claim, a price, an awkward line).
-
+{hotspots}
 {realism}
 
 {evidence}
@@ -84,7 +92,10 @@ def _ask(keyframe, personas, context, speech="", lang="ja"):
                 t=keyframe["t"], context=context, personas=lines, realism=REALISM,
                 evidence=EVIDENCE.format(language=parts["language"]), thought_rule=parts["thought_rule"],
                 thought_shape=parts["thought_shape"], because_hint=parts["because_hint"],
-                speech=f'Audio heard around this moment: "{speech}"\n' if speech else "")},
+                speech=f'Audio heard around this moment: "{speech}"\n' if speech else "",
+                hotspots=HOTSPOTS.format(spots=", ".join(f"(x={x:.2f}, y={y:.2f}, {round(s * 100)}%)"
+                                                         for x, y, s in keyframe["hotspots"]))
+                if keyframe.get("hotspots") else "")},
         ]}],
     )
     out = []

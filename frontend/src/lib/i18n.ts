@@ -532,8 +532,12 @@ const en = {
   "cmp.tooFew": "Too few viewers on one side to measure the difference.",
   "pl.model": "Predicted attention (trained model)",
   "pl.mixModel": "Model + AI personas",
-  "pl.heatInfoModel": "Predicted attention comes from UNISAL, a saliency model trained on real eye-tracking. Checked against real people's gaze: CC 0.70 on 200 everyday photos (MIT1003) and 0.41 on 359 posters and ads in the first 3 seconds (UEyes); the old map scored 0.38 and 0.30. The AI personas' own points score 0.49 and 0.22, so use them for the reasons, not for exact gaze.",
+  "pl.heatInfoModel": "Predicted attention comes from UNISAL, a saliency model trained on real eye-tracking. Checked against real people's gaze: CC 0.70 on 200 everyday photos (MIT1003) and 0.41 on 359 posters and ads in the first 3 seconds (UEyes); the old map scored 0.38 and 0.30. Each AI persona now picks among the model's hotspots, which brought their points to 0.63 and 0.32 (from 0.49 and 0.22). Use the personas for the reasons; use the map for where people look.",
   "pl.heatInfoOld": "This older test used a basic contrast map, which matches real eye-tracking poorly (CC 0.38 on MIT1003). New tests use a trained attention model (CC 0.70).",
+  "rep.range95": "(95% range)",
+  "rep.rangeHint": "How far the panel's average could move with a different set of similar viewers. Wider with fewer viewers.",
+  "rep.smallPanel": "Small panel ({n} viewers): the same ad shown twice to the same 5 viewers moved the average by 0.4 in our check. Treat differences under ±0.5 as noise, or rerun with 20 or more viewers.",
+  "new.smallPanel": "Fewer than 20 viewers: results can shift between runs. Use 20 or more for decisions.",
 } as const;
 
 export type Key = keyof typeof en;
@@ -1058,8 +1062,12 @@ const ja: Record<Key, string> = {
   "cmp.tooFew": "片方の視聴者が少なすぎるため、差を測定できません。",
   "pl.model": "予測注視（学習済みモデル）",
   "pl.mixModel": "モデル＋AIペルソナ",
-  "pl.heatInfoModel": "予測注視は、実際の視線計測データで学習したサリエンシーモデルUNISALによるものです。実際の人の視線との一致度は、日常写真200枚（MIT1003）でCC 0.70、ポスター・広告359枚の最初の3秒（UEyes）で0.41でした（旧マップは0.38と0.30）。AIペルソナ自身の視点は0.49と0.22のため、正確な視線ではなく理由の把握に使ってください。",
+  "pl.heatInfoModel": "予測注視は、実際の視線計測データで学習したサリエンシーモデルUNISALによるものです。実際の人の視線との一致度は、日常写真200枚（MIT1003）でCC 0.70、ポスター・広告359枚の最初の3秒（UEyes）で0.41でした（旧マップは0.38と0.30）。各AIペルソナはモデルの注目候補から視点を選ぶようになり、一致度は0.49→0.63、0.22→0.32に上がりました。視線の位置はマップで、理由はペルソナで確認してください。",
   "pl.heatInfoOld": "この過去のテストは簡易コントラストマップを使っており、実際の視線計測との一致度は低め（MIT1003でCC 0.38）です。新しいテストでは学習済み注視モデル（CC 0.70）を使います。",
+  "rep.range95": "（95%範囲）",
+  "rep.rangeHint": "似た別の視聴者で行った場合に平均がどれくらい動きうるかの目安です。人数が少ないほど広がります。",
+  "rep.smallPanel": "少人数のパネルです（{n}人）。同じ広告を同じ5人に2回見せた検証では、平均が0.4動きました。±0.5未満の差はばらつきとみなすか、20人以上で再実行してください。",
+  "new.smallPanel": "20人未満では実行ごとに結果がぶれることがあります。判断に使うなら20人以上をおすすめします。",
 };
 
 export const dictionaries: Record<Lang, Record<Key, string>> = { en, ja };

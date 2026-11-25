@@ -41,6 +41,19 @@ Text-heavy posters are harder for every method (the UEyes paper reports the same
 natural images). The persona points are close to the centre blob here, and below it for the first second, even
 though the prompt asks where the eyes land first.
 
+## Grounding the personas in the model (same day)
+
+Each keyframe now carries the model's 3–5 strongest hotspots, and the persona prompt asks each persona to pick
+the spot that fits them (or another only if their interests clearly pull them there). Same panel, same images:
+
+| Dataset | personas before | personas grounded | model |
+|---|---|---|---|
+| MIT1003, CC / NSS | 0.49 / 1.61 | **0.63 / 2.12** | 0.70 / 2.38 |
+| UEyes posters 3 s, CC / NSS | 0.22 / 0.46 | **0.32 / 0.69** | 0.41 / 0.87 |
+
+The persona points now beat the old map on both sets; the map itself stays the better estimate of where people
+look. Cost of the grounded runs: about $0.92.
+
 ## What it means
 
 - The trained model is the best map on both datasets, so new tests use it by default (worker snapshot

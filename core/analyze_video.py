@@ -193,6 +193,12 @@ def main(src: str, out: str):
             "peak": [round((peak[1] + 0.5) / GRID_W, 3), round((peak[0] + 0.5) / GRID_H, 3)],
         })
 
+    hot = None
+    if mmaps:
+        try:
+            from core.attention import hotspots as hot
+        except ImportError:
+            from attention import hotspots as hot
     n_kf = int(np.clip(duration / KEYFRAME_EVERY_S, MIN_KEYFRAMES, MAX_KEYFRAMES))
     picks = np.linspace(0, len(frames) - 1, min(n_kf, len(frames))).round().astype(int)
     for i in sorted(set(picks.tolist())):
@@ -200,7 +206,10 @@ def main(src: str, out: str):
         scale = 768 / max(w, h)
         thumb = cv2.resize(frame, (int(w * scale), int(h * scale))) if scale < 1 else frame
         ok, buf = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        result["keyframes"].append({"t": round(t, 3), "jpg_b64": base64.b64encode(buf).decode()})
+        kf = {"t": round(t, 3), "jpg_b64": base64.b64encode(buf).decode()}
+        if hot is not None:   # where real viewers' eyes most likely go: grounds the persona gaze step
+            kf["hotspots"] = hot(mmaps[int(np.abs(mtimes - t).argmin())][1])
+        result["keyframes"].append(kf)
 
     if duration > 0:
         result["transcript"] = transcribe(src)

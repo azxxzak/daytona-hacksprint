@@ -65,3 +65,25 @@ class Model:
             s = s[0]
             out.append(s / (s.max() + 1e-12))
         return out
+
+
+def hotspots(m: np.ndarray, k: int = 5, min_rel: float = 0.35, radius: float = 0.09) -> list[list[float]]:
+    """Strongest separate peaks of an attention map -> [[x, y, strength 0-1], ...] in normalised image coordinates.
+    Peaks closer than `radius` (share of the larger side) to a stronger one are dropped."""
+    m = np.asarray(m, dtype=np.float32)
+    h, w = m.shape
+    top = float(m.max())
+    if top <= 0:
+        return []
+    work = m.copy()
+    ys, xs = np.mgrid[0:h, 0:w]
+    r = radius * max(h, w)
+    out = []
+    for _ in range(k):
+        y, x = np.unravel_index(int(np.argmax(work)), work.shape)
+        v = float(work[y, x])
+        if v < min_rel * top:
+            break
+        out.append([round((x + 0.5) / w, 3), round((y + 0.5) / h, 3), round(v / top, 2)])
+        work[(xs - x) ** 2 + (ys - y) ** 2 <= r * r] = 0
+    return out

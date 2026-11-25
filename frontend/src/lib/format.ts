@@ -50,3 +50,15 @@ export const AGE_GROUPS: { key: SegmentKey; label: "pl.u25" | "pl.a25" | "pl.a35
 export function mean(xs: number[]): number | null {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 }
+
+/** Mean interest across viewers with a 95% range (each viewer's own average counts once). */
+export function interestRange(gaze: Pick<Gaze, "id" | "interest">[]): { mean: number; half: number; n: number } | null {
+  const per = new Map<string, number[]>();
+  for (const g of gaze) (per.get(g.id) ?? per.set(g.id, []).get(g.id)!).push(g.interest);
+  const xs = [...per.values()].map((v) => v.reduce((a, b) => a + b, 0) / v.length);
+  if (xs.length < 2) return null;
+  const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
+  const tcrit = xs.length >= 30 ? 2.0 : xs.length >= 20 ? 2.09 : xs.length >= 10 ? 2.26 : 2.78;
+  return { mean: m, half: (tcrit * sd) / Math.sqrt(xs.length), n: xs.length };
+}

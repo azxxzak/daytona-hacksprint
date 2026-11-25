@@ -41,6 +41,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--hints", action="store_true", help="give the panel the attention model's hotspots, as the worker does")
     a = ap.parse_args()
     items = json.loads(Path(a.manifest).read_text())
     if a.limit:
@@ -51,10 +52,18 @@ def main():
     todo = [it for it in items if it["image"] not in out]
     print(f"{len(todo)} images to ask ({len(out)} cached), panel of {len(panel)}", flush=True)
 
+    model = None
+    if a.hints:
+        from core import attention
+        model = attention.Model(ROOT / ".saliency")
+
     def ask(it):
+        kf = keyframe(it["image"])
+        if model is not None:
+            kf["hotspots"] = attention.hotspots(model.image(cv2.imread(it["image"])))
         for _ in range(3):   # an occasional malformed JSON reply: ask again (the real worker skips the frame)
             try:
-                pts = gaze._ask(keyframe(it["image"]), panel, "", "", "ja")
+                pts = gaze._ask(kf, panel, "", "", "ja")
                 return it["image"], [[g["x"], g["y"]] for g in pts]
             except ValueError:
                 continue

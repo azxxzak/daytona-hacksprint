@@ -599,6 +599,7 @@ export function NewTest() {
             <dt className="text-xs text-mute">{t("new.sumTime")}</dt>
             <dd className="tnum mt-1 text-2xl font-bold">{t("new.sumTimeVal", { n: minutes })}</dd>
             <dd className="mt-1 text-xs leading-relaxed text-mute">{t("new.sumHint")}</dd>
+            {panelCount > 0 && panelCount < 20 && <dd className="mt-2 rounded-lg bg-canvas px-3 py-2 text-xs leading-relaxed text-ink/75">{t("new.smallPanel")}</dd>}
           </div>
         </dl>
         {submitError && (
