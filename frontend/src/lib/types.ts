@@ -115,6 +115,13 @@ export type Test = TestSummary & {
   gaze: Gaze[];
   summary: Summary | null;
   themes?: Theme[] | null;
+  /** where this test's sub-resources live: /api/tests/{id} for the owner, /api/share/{token} on a shared link */
+  api_base?: string;
+  /** shared link: nothing can be changed or generated (no sign-in, no spend) */
+  read_only?: boolean;
+  share_token?: string | null;
+  /** A/B: this test reused the exact panel of that test */
+  panel_from?: string | null;
 };
 
 export type Message = { role: "user" | "assistant"; content: string };

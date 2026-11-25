@@ -246,9 +246,11 @@ type Deep = { markdown: string | null; status: "none" | "generating" | "ready" }
 
 /** Right-hand sheet: tier-1 profile page, plus on-demand deep profile. */
 export function PersonaSheet({
-  persona, pid, onClose, actionLabel, onAction, children,
+  persona, pid, onClose, actionLabel, onAction, children, readOnly,
 }: {
   persona: Persona | null; pid: string | null; onClose: () => void; actionLabel?: string; onAction?: (p: Persona) => void; children?: ReactNode;
+  /** shared link: no deep profile (it needs sign-in and costs money) */
+  readOnly?: boolean;
 }) {
   const { t } = useI18n();
   const toast = useToast();
@@ -266,7 +268,7 @@ export function PersonaSheet({
 
   // load status when a sheet opens; poll every 3 s while generating
   useEffect(() => {
-    if (!pid) return;
+    if (!pid || readOnly) return;
     let stop = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -277,7 +279,7 @@ export function PersonaSheet({
     };
     void tick();
     return () => { stop = true; clearTimeout(timer); };
-  }, [pid, fetchDeep, requested]);
+  }, [pid, fetchDeep, requested, readOnly]);
 
   const generate = () => {
     if (!pid) return;
@@ -325,7 +327,7 @@ export function PersonaSheet({
                 <Button className="w-full" onClick={() => onAction(persona)}><MessageCircle size={16} aria-hidden /> {actionLabel}</Button>
               </div>
             )}
-            {p && (
+            {p && !readOnly && (
               <section aria-label={t("pf.deepTitle")} className="mt-4 rounded-card bg-ink p-4 text-white">
                 {shown?.status === "ready" && shown.markdown ? (
                   <button type="button" onClick={() => setView("deep")} className="flex w-full items-center gap-3 text-left">

@@ -29,7 +29,10 @@ function ProfileSheet({ test, persona, onClose, onTalk }: { test: Test; persona:
   const timeline = useMemo(() => (persona ? test.gaze.filter((g) => g.id === persona.id).sort((a, b) => a.t - b.t) : []), [test.gaze, persona]);
   const avgs = usePersonaAverages(test);
   return (
-    <PersonaSheet persona={persona} pid={persona ? `${test.id}:${persona.id}` : null} onClose={onClose} actionLabel={t("vw.talk")} onAction={onTalk}>
+    <PersonaSheet
+      persona={persona} pid={persona ? `${test.id}:${persona.id}` : null} onClose={onClose} readOnly={test.read_only}
+      actionLabel={test.read_only ? undefined : t("vw.talk")} onAction={test.read_only ? undefined : onTalk}
+    >
       {persona && (
         <p className="tnum mt-4 text-sm text-mute">{t("vw.avg", { v: (avgs.get(persona.id) ?? 0).toFixed(1) })}</p>
       )}
@@ -146,7 +149,7 @@ export function Viewers({ test }: { test: Test }) {
         label={t("vw.label")}
         title={t("vw.title")}
         action={
-          selecting ? (
+          test.read_only ? undefined : selecting ? (
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setPicked(new Set(test.personas.slice(0, MAX_PICK).map((p) => p.id)))}>{t("vw.selectAll")}</Button>
               <Button size="sm" onClick={exitSelect}>{t("vw.doneSelect")}</Button>
@@ -158,7 +161,7 @@ export function Viewers({ test }: { test: Test }) {
           )
         }
       />
-      <PastTalks test={test} personas={byId} />
+      {!test.read_only && <PastTalks test={test} personas={byId} />}
       <ul className="mt-6 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {test.personas.map((p, i) => (
           <li key={p.id}>
@@ -169,7 +172,7 @@ export function Viewers({ test }: { test: Test }) {
               selected={picked.has(p.id)}
               onToggle={() => toggle(p.id)}
               onDetails={() => setOpen(p)}
-              onTalk={() => create([p.id], "qa")}
+              onTalk={test.read_only ? undefined : () => create([p.id], "qa")}
               badge={<span className="tnum rounded-full bg-ink/80 px-2 py-0.5 text-[11px] text-white">{(avgs.get(p.id) ?? 0).toFixed(1)}</span>}
             />
           </li>

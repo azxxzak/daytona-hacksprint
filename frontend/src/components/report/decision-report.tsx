@@ -5,6 +5,7 @@ import { Download, RefreshCw, Sparkles } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import type { DecisionReport, Test } from "@/lib/types";
+import { apiBase } from "@/lib/format";
 import { useI18n } from "../i18n-provider";
 import { useToast } from "../toast";
 import { LongProgress } from "../long-progress";
@@ -36,12 +37,12 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onRegenerate: () => void }) {
+function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onRegenerate?: () => void }) {
   const { t } = useI18n();
   const toast = useToast();
   const [busy, setBusy] = useState<"pptx" | "pdf" | null>(null);
   const [noPdf, setNoPdf] = useState(false);
-  const base = `/api/tests/${test.id}/report`;
+  const base = `${apiBase(test)}/report`;
 
   const get = async (kind: "pptx" | "pdf") => {
     setBusy(kind);
@@ -75,8 +76,8 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => get("pptx")} disabled={busy !== null}><Download size={14} aria-hidden /> {t("dr.pptx")}</Button>
-          {!noPdf && <Button size="sm" variant="outline" onClick={() => get("pdf")} disabled={busy !== null}><Download size={14} aria-hidden /> {t("dr.pdf")}</Button>}
-          <Button size="sm" variant="ghost" onClick={onRegenerate}><RefreshCw size={14} aria-hidden /> {t("dr.regenerate")}</Button>
+          {!noPdf && !test.read_only && <Button size="sm" variant="outline" onClick={() => get("pdf")} disabled={busy !== null}><Download size={14} aria-hidden /> {t("dr.pdf")}</Button>}
+          {onRegenerate && <Button size="sm" variant="ghost" onClick={onRegenerate}><RefreshCw size={14} aria-hidden /> {t("dr.regenerate")}</Button>}
         </div>
       </div>
 
@@ -179,7 +180,7 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
 export function DecisionReportTab({ test }: { test: Test }) {
   const { t, lang } = useI18n();
   const toast = useToast();
-  const base = `/api/tests/${test.id}/report`;
+  const base = `${apiBase(test)}/report`;
   const [state, setState] = useState<State | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -253,8 +254,9 @@ export function DecisionReportTab({ test }: { test: Test }) {
   }
 
   if (state.status === "ready" && state.report && !editing) {
-    return <Ready r={state.report} test={test} onRegenerate={() => { setQuestion(state.report?.decision_question ?? ""); setEditing(true); }} />;
+    return <Ready r={state.report} test={test} onRegenerate={test.read_only ? undefined : () => { setQuestion(state.report?.decision_question ?? ""); setEditing(true); }} />;
   }
+  if (test.read_only) return <p className="rounded-card bg-surface px-5 py-8 text-center text-sm text-mute">{t("share.noReport")}</p>;
 
   return (
     <div className="mx-auto max-w-xl py-8 text-center sm:py-14">

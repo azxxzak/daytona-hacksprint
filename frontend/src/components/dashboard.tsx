@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Film, Image as ImageIcon, Sparkles, Users, Upload, MessageCircle, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
-import { usePolled, isActive } from "@/lib/hooks";
+import { useApi, usePolled, isActive } from "@/lib/hooks";
 import type { Test, TestSummary } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { ProgressBar } from "./progress-bar";
@@ -120,7 +120,7 @@ function TestCard({ test, onDelete, onRename }: { test: TestSummary & { progress
   );
 }
 
-function FirstRun() {
+function FirstRun({ sample }: { sample: boolean }) {
   const { t } = useI18n();
   const steps = [
     { Icon: Users, title: t("dash.s1t"), body: t("dash.s1d") },
@@ -143,9 +143,16 @@ function FirstRun() {
           </li>
         ))}
       </ol>
-      <Link href="/tests/new" className={buttonClass("primary", "lg", "mt-8")}>
-        <Plus size={18} aria-hidden /> {t("dash.start")}
-      </Link>
+      <div className="mt-8 flex flex-wrap gap-3">
+        <Link href="/tests/new" className={buttonClass("primary", "lg")}>
+          <Plus size={18} aria-hidden /> {t("dash.start")}
+        </Link>
+        {sample && (
+          <Link href="/share/sample" className={buttonClass("outline", "lg")}>
+            <Sparkles size={16} aria-hidden /> {t("dash.sampleOpen")}
+          </Link>
+        )}
+      </div>
     </div>
   );
 }
@@ -168,7 +175,9 @@ export function Dashboard() {
   const [newName, setNewName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const all = data?.tests ?? [];
-  const sample = all.length <= 4 ? all.find((x) => x.status === "done") : undefined;
+  const sampleApi = useApi<{ available: boolean }>("/api/share/sample/available");
+  const hasSample = !!sampleApi.data?.available;
+  const sample = all.length <= 4 && hasSample;
   const tests = all.filter((x) => {
     const okStatus = filter === "all" || (filter === "running" ? isActive(x) : x.status === filter);
     return okStatus && x.name.toLowerCase().includes(query.trim().toLowerCase());
@@ -249,7 +258,7 @@ export function Dashboard() {
         )}
 
         {data && all.length === 0 && (
-          <FirstRun />
+          <FirstRun sample={hasSample} />
         )}
 
         {all.length > 0 && tests.length === 0 && <p className="py-10 text-center text-sm text-mute">{t("dash.noMatch")}</p>}
@@ -258,7 +267,7 @@ export function Dashboard() {
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {sample && query === "" && filter === "all" && (
               <li>
-                <Link href={`/tests/${sample.id}`} className="group relative flex h-full min-h-[200px] flex-col justify-between overflow-hidden rounded-card bg-ink p-5 text-white transition-transform hover:-translate-y-0.5">
+                <Link href="/share/sample" className="group relative flex h-full min-h-[200px] flex-col justify-between overflow-hidden rounded-card bg-ink p-5 text-white transition-transform hover:-translate-y-0.5">
                   <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium"><Sparkles size={12} className="text-lime" aria-hidden /> {t("dash.sample")}</span>
                   <span>
                     <span className="block text-lg font-bold leading-snug">{t("dash.sampleD")}</span>

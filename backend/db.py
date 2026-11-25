@@ -82,6 +82,8 @@ class Test(SQLModel, table=True):
     worker_checked_at: float = 0.0            # last time a poll looked at the worker (throttle)
     started_at: float = 0.0
     lang: str = "ja"                          # language of every output of this test (UI language at start)
+    share_token: str | None = Field(default=None, unique=True, index=True)   # read-only public link; None = not shared
+    panel_from: str | None = None             # A/B: id of the test whose exact panel this test reused
 
 
 class Usage(SQLModel, table=True):
@@ -97,7 +99,7 @@ class Usage(SQLModel, table=True):
 
 _NEW_COLUMNS = {  # columns added after the first deploy; create_all() does not alter existing tables
     "test": [("worker_id", "VARCHAR"), ("worker_checked_at", "FLOAT DEFAULT 0"), ("started_at", "FLOAT DEFAULT 0"),
-             ("lang", "VARCHAR DEFAULT 'ja'")],
+             ("lang", "VARCHAR DEFAULT 'ja'"), ("share_token", "VARCHAR"), ("panel_from", "VARCHAR")],
     "persona_bank": [("profile_en", "JSON"), ("search_text", "TEXT")],
 }
 _inited = False
@@ -117,6 +119,8 @@ def init():
                     continue
                 for name, typ in cols:
                     c.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS {name} {typ}'))
+            if "test" in have:
+                c.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_test_share_token ON "test" (share_token)'))
     _inited = True
 
 

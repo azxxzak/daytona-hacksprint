@@ -7,7 +7,7 @@ import { ArrowLeft, Check, FileUp, Film, Image as ImageIcon, Loader2, Play, Plus
 import { ApiError, api, uploadFile, uploadTest } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useApi } from "@/lib/hooks";
-import type { LibraryGroup, Persona } from "@/lib/types";
+import type { LibraryGroup, Persona, Test } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { LibraryGroupSection } from "./library-groups";
 import { PersonaCard } from "./persona-card";
@@ -15,7 +15,7 @@ import { PersonaSheet } from "./persona-sheet";
 import { FacetField, type FacetItem } from "./facet-field";
 import { PeopleBrowser } from "./people-browser";
 import { useToast } from "./toast";
-import { Button, Card, Dialog, ErrorNote, cx, useDocTitle } from "./ui";
+import { Avatar, Button, Card, Dialog, ErrorNote, cx, useDocTitle } from "./ui";
 
 const AGE_MIN = 15;
 const AGE_MAX = 80;
@@ -110,6 +110,25 @@ function StepHead({ n, title }: { n: number; title: string }) {
   );
 }
 
+/** "New version, same panel": the exact viewers of an earlier test, for a fair A/B comparison. */
+function SamePanel({ test }: { test: Test }) {
+  const { t } = useI18n();
+  return (
+    <div className="mt-6 rounded-card bg-surface p-5 sm:p-6">
+      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("ab.samePanel")}</p>
+      <p className="mt-2 text-lg font-bold leading-snug">{t("ab.samePanelTitle", { n: test.personas.length, name: test.name })}</p>
+      <p className="mt-1 text-sm leading-relaxed text-mute">{t("ab.samePanelBody")}</p>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="flex -space-x-2">
+          {test.personas.slice(0, 12).map((p) => <Avatar key={p.id} src={p.avatar_url} name={p.name} color={p.color} rounded="rounded-full" className="size-8 ring-2 ring-surface" />)}
+          {test.personas.length > 12 && <span className="tnum grid size-8 place-items-center rounded-full bg-canvas text-[11px] ring-2 ring-surface">+{test.personas.length - 12}</span>}
+        </span>
+        <Link href="/tests/new" className="text-sm font-medium underline underline-offset-4">{t("ab.otherPanel")}</Link>
+      </div>
+    </div>
+  );
+}
+
 export function NewTest() {
   const { t, lang } = useI18n();
   const router = useRouter();
@@ -117,6 +136,9 @@ export function NewTest() {
   const params = useSearchParams();
   useDocTitle(t("dash.new"));
   const initialLib = (params.get("library") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const panelFrom = /^[a-f0-9]{12}$/.test(params.get("panel_from") ?? "") ? params.get("panel_from") : null;
+  const src = useApi<Test>(panelFrom ? `/api/tests/${panelFrom}` : null);
+  const fromTest = panelFrom && src.data?.status === "done" ? src.data : null;
 
   const [source, setSource] = useState<Source>(initialLib.length ? "library" : "bank");
   const [libIds, setLibIds] = useState<string[]>(initialLib);
@@ -197,10 +219,10 @@ export function NewTest() {
       return next.F || next.M ? next : s;
     });
 
-  const audienceOk = source === "bank" || (source === "csv" && !!csv) || (source === "library" && libIds.length >= 5 && libIds.length <= 60);
+  const audienceOk = !!fromTest || source === "bank" || (source === "csv" && !!csv) || (source === "library" && libIds.length >= 5 && libIds.length <= 60);
   const busy = phase !== "idle";
   const ready = !!file && audienceOk && !busy;
-  const panelCount = source === "library" ? libIds.length : count;
+  const panelCount = fromTest ? fromTest.personas.length : source === "library" ? libIds.length : count;
   const minutes = Math.max(1, Math.round(0.5 + (isVideo ? (dur ?? 60) / 120 : 0) + panelCount / 40));
 
   const start = async () => {
@@ -229,8 +251,9 @@ export function NewTest() {
         }
       }
       setPhase("create");
-      const panel =
-        source === "library"
+      const panel = fromTest
+        ? { source: "test", from_test: fromTest.id }
+        : source === "library"
           ? { source: "library", persona_ids: libIds }
           : source === "csv"
             ? { source: "csv", csv_upload_id: csvId, age_min: age[0], age_max: age[1], genders: gendersArr, count }
@@ -284,8 +307,9 @@ export function NewTest() {
   };
 
   const phaseText = phase === "media" ? t("new.uploading", { pct }) : phase === "csv" ? t("new.phaseCsv") : phase === "create" ? t("new.phaseCreate") : "";
-  const audienceSummary =
-    source === "library" ? `${t("new.srcLibrary")} · ${t("new.people", { n: libIds.length })}`
+  const audienceSummary = fromTest
+    ? `${t("ab.samePanel")} · ${t("new.people", { n: fromTest.personas.length })}`
+    : source === "library" ? `${t("new.srcLibrary")} · ${t("new.people", { n: libIds.length })}`
       : source === "csv" ? (csv ? `${t("new.srcCsv")} · ${t("new.people", { n: count })}` : "")
         : `${t("new.srcBank")} · ${age[0]}–${age[1]} · ${gendersArr.map((g) => (g === "F" ? t("new.female") : t("new.male"))).join("/")} · ${t("new.people", { n: count })}`;
 
@@ -317,6 +341,8 @@ export function NewTest() {
           {/* STEP 1 */}
           <section aria-labelledby="step1">
             <div id="step1"><StepHead n={1} title={t("new.step1")} /></div>
+            {fromTest ? <SamePanel test={fromTest} /> : (
+            <>
             <div role="radiogroup" aria-label={t("new.src")} className="mt-6 grid w-full grid-cols-3 gap-1 rounded-[14px] bg-surface p-1 sm:inline-grid sm:w-auto sm:rounded-full">
               {([["bank", "new.srcBank"], ["library", "new.srcLibrary"], ["csv", "new.srcCsv"]] as const).map(([k, label]) => (
                 <button
@@ -443,6 +469,8 @@ export function NewTest() {
                   ))}
                 </ul>
               </div>
+            )}
+            </>
             )}
           </section>
 

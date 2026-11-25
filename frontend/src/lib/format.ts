@@ -1,4 +1,9 @@
-import type { Gaze, Persona } from "./types";
+import type { Gaze, Persona, Test } from "./types";
+
+/** Base path of a test's report/market/media endpoints (owner or shared link). */
+export function apiBase(test: Pick<Test, "id" | "api_base">): string {
+  return test.api_base ?? `/api/tests/${test.id}`;
+}
 import type { Lang } from "./i18n";
 
 export function fmtTime(sec: number): string {

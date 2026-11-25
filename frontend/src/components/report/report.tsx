@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useRef } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { ArrowLeft, Columns2, Link2, Repeat } from "lucide-react";
 import { fmtTime } from "@/lib/format";
 import type { Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
-import { cx, useDocTitle } from "../ui";
+import { Button, buttonClass, cx, useDocTitle } from "../ui";
+import { ShareDialog } from "./share-dialog";
 import { Player, type PlayerHandle } from "./player";
 import { MarketTab } from "./market";
 import { DecisionReportTab } from "./decision-report";
@@ -23,6 +24,7 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
   const router = useRouter();
   const params = useSearchParams();
   const player = useRef<PlayerHandle>(null);
+  const [sharing, setSharing] = useState(false);
   const s = test.summary;
   useDocTitle(test.name);
 
@@ -52,12 +54,25 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
   return (
     <div className="space-y-8">
       <header>
-        <Link href="/" className="mb-4 inline-flex items-center gap-1.5 text-sm text-mute hover:text-ink">
-          <ArrowLeft size={15} aria-hidden /> {t("common.back")}
-        </Link>
+        {!test.read_only && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-mute hover:text-ink">
+              <ArrowLeft size={15} aria-hidden /> {t("common.back")}
+            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link href={`/tests/new?panel_from=${test.id}`} className={buttonClass("outline", "sm")} title={t("ab.variantHint")}>
+                <Repeat size={14} aria-hidden /> {t("ab.variant")}
+              </Link>
+              <Link href={`/compare?a=${test.id}`} className={buttonClass("outline", "sm")}>
+                <Columns2 size={14} aria-hidden /> {t("ab.compare")}
+              </Link>
+              <Button size="sm" onClick={() => setSharing(true)}><Link2 size={14} aria-hidden /> {test.share_token ? t("share.shared") : t("share.button")}</Button>
+            </div>
+          </div>
+        )}
         <div className="rounded-[20px] bg-surface p-6 sm:p-10">
           <p className="tnum text-xs text-mute">{date} · {t("rep.viewersCount", { n: test.viewers })}</p>
-          <TestName test={test} onRenamed={onRenamed} />
+          {test.read_only ? <h1 className="mt-1 truncate text-base font-bold">{test.name}</h1> : <TestName test={test} onRenamed={onRenamed} />}
           {s && (
             <>
               <p className="mt-4 max-w-4xl text-balance text-[28px] font-bold leading-snug tracking-tight sm:text-[44px] sm:leading-[1.25]">{verdict}</p>
@@ -109,6 +124,7 @@ export function Report({ test, onRenamed }: { test: Test; onRenamed: () => void 
           {tab === "market" && <MarketTab test={test} />}
         </div>
       </div>
+      {!test.read_only && sharing && <ShareDialog test={test} open onClose={() => setSharing(false)} onChanged={onRenamed} />}
     </div>
   );
 }

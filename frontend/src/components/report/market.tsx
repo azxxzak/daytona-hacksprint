@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowUpRight, Globe, Loader2, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
+import { apiBase } from "@/lib/format";
 import type { Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
 import { LongProgress } from "../long-progress";
@@ -63,7 +64,7 @@ const VERDICT: Record<Market["fit"][number]["verdict"], string> = {
 export function MarketTab({ test }: { test: Test }) {
   const { t } = useI18n();
   const toast = useToast();
-  const base = `/api/tests/${test.id}/market`;
+  const base = `${apiBase(test)}/market`;
   const [data, setData] = useState<Resp | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,6 +103,7 @@ export function MarketTab({ test }: { test: Test }) {
   }
 
   const m = data.market;
+  if (!m && test.read_only) return <p className="rounded-card bg-surface px-5 py-8 text-center text-sm text-mute">{t("share.noMarket")}</p>;
   if (!m) {
     return (
       <Card className="grid gap-6 p-6 sm:p-8 md:grid-cols-[1fr_auto] md:items-center">
@@ -207,7 +209,7 @@ export function MarketTab({ test }: { test: Test }) {
       <section aria-label={t("mk.sources")} className="rounded-card bg-surface p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-bold">{t("mk.sources")} <span className="tnum font-normal text-mute">({S.length})</span></h3>
-          <Button variant="outline" size="sm" onClick={() => run(true)}><RefreshCw size={14} aria-hidden /> {t("mk.rerun")}</Button>
+          {!test.read_only && <Button variant="outline" size="sm" onClick={() => run(true)}><RefreshCw size={14} aria-hidden /> {t("mk.rerun")}</Button>}
         </div>
         <ol className="mt-4 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
           {S.map((s) => (

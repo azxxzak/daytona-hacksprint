@@ -319,6 +319,7 @@ class PanelIn(BaseModel):
     seed: int | None = None
     persona_ids: list[str] = []
     csv_upload_id: str = ""
+    from_test: str = ""          # source "test": reuse that test's exact panel (fair A/B)
 
 
 class NewTestIn(BaseModel):
@@ -331,6 +332,17 @@ class NewTestIn(BaseModel):
 
 def _panel_from(body: NewTestIn, user: User) -> list[dict]:
     pn = body.panel
+    if pn.source == "test":   # the very same viewers as an earlier test, already in that test's language
+        src = own_test(pn.from_test, user)
+        try:
+            return json.loads((db.test_dir(src.id) / "personas.json").read_text())
+        except (FileNotFoundError, ValueError):
+            pass
+        try:   # tests made before the panel file existed: the panel is in the result
+            return [{k: v for k, v in p.items() if k not in ("avatar_url", "has_deep_profile")}
+                    for p in _result(src)["personas"]]
+        except (HTTPException, KeyError):
+            raise HTTPException(400, "That test's panel could not be read.") from None
     if pn.source == "library":  # hand-picked: curated library (lib_*) and/or anyone from the bank (bank_*)
         lib = library.all_personas()
         ids = list(dict.fromkeys(pn.persona_ids))
@@ -385,20 +397,27 @@ def create_test(body: NewTestIn, user: User = auth.CurrentUser):
     if busy:
         raise HTTPException(409, "A test is already running on this account. Wait for it to finish, then start the next.")
     personas = _panel_from(body, user)
+    panel_from = None
+    if body.panel.source == "test":
+        src = own_test(body.panel.from_test, user)
+        panel_from = src.id
+        if (src.lang or "ja") != lang and lang == "ja":
+            raise HTTPException(400, "This panel was made in English. Switch the screen to English to reuse it.")
     register_portraits(personas)
-    token = localize.LANG.set(lang)  # the panel is written in the test's language (bank: stored English profiles)
-    try:
-        llm.current_user.set(user.email)
-        personas = localize.personas(personas)
-    finally:
-        localize.LANG.reset(token)
+    if not (panel_from and (src.lang or "ja") == lang):   # a reused panel is already in this language
+        token = localize.LANG.set(lang)  # the panel is written in the test's language (bank: stored English profiles)
+        try:
+            llm.current_user.set(user.email)
+            personas = localize.personas(personas)
+        finally:
+            localize.LANG.reset(token)
     kind, mime = MEDIA_TYPES[ext]
     test_id = uuid.uuid4().hex[:12]
     (db.test_dir(test_id) / "personas.json").write_text(json.dumps(personas, ensure_ascii=False, default=str))
     with db.session() as s:
         t = Test(id=test_id, owner=user.email, name=(body.name.strip() or "Untitled test")[:120],
                  context=body.context[:500], media_kind=kind, mime=mime, viewers=len(personas),
-                 message="Waiting to start", lang=lang)
+                 message="Waiting to start", lang=lang, panel_from=panel_from)
         s.add(t)
         s.commit()
         s.refresh(t)
@@ -435,12 +454,11 @@ def _result(t: Test) -> dict:
         raise HTTPException(409, "The test result is missing.") from None
 
 
-@app.get("/api/tests/{test_id}")
-def get_test(test_id: str, user: User = auth.CurrentUser):
-    t = worker_ctl.poll(own_test(test_id, user))
+def _test_out(t: Test) -> dict:
     out = {**summary_out(t), "context": t.context,
            "progress": {"step": t.step, "message": t.message, "percent": t.percent},
            "error": t.error, "where": t.where, "media_url": f"/api/tests/{t.id}/media",
+           "api_base": f"/api/tests/{t.id}", "panel_from": t.panel_from,
            "duration": 0, "width": 0, "height": 0, "grid": [48, 27], "frames": [], "transcript": [],
            "personas": [], "gaze": [], "summary": None, "themes": None}
     if t.status == "done":
@@ -457,6 +475,12 @@ def get_test(test_id: str, user: User = auth.CurrentUser):
         except (FileNotFoundError, ValueError):
             pass
     return out
+
+
+@app.get("/api/tests/{test_id}")
+def get_test(test_id: str, user: User = auth.CurrentUser):
+    t = worker_ctl.poll(own_test(test_id, user))
+    return {**_test_out(t), "share_token": t.share_token}
 
 
 @app.delete("/api/tests/{test_id}", status_code=204)
@@ -827,6 +851,187 @@ def usage(user: User = auth.CurrentUser):
     with db.session() as s:
         n_tests = len(s.exec(select(Test).where(Test.owner == user.email)).all())
     return {"month_usd": u["month_usd"], "tests": n_tests, "talk_messages": u["calls"]["talk"]}
+
+
+# ---------------- A/B comparison ----------------
+def _cmp_pair(a: str, b: str, user: User):
+    ta, tb = own_test(a, user), own_test(b, user)
+    if ta.id == tb.id:
+        raise HTTPException(400, "Pick two different tests.")
+    if ta.status != "done" or tb.status != "done":
+        raise HTTPException(409, "Both tests must be finished.")
+    return ta, _result(ta), tb, _result(tb)
+
+
+def _cmp_file(ta: Test, tb: Test, lang: str) -> SPath:
+    return db.test_dir(tb.id) / f"compare_{ta.id}_{lang}.json"
+
+
+@app.get("/api/compare")
+def compare_tests(a: str, b: str, user: User = auth.CurrentUser):
+    from core import compare as cmp_mod
+    ta, ra, tb, rb = _cmp_pair(a, b, user)
+    linked = tb.panel_from == ta.id or ta.panel_from == tb.id
+    out = cmp_mod.compare(summary_out(ta), ra, summary_out(tb), rb, linked)
+    for side, r in (("a", ra), ("b", rb)):   # avatars for the movers list
+        by = {p["id"]: avatar_url(p) for p in r["personas"]}
+        for m in out["movers"]:
+            m.setdefault("avatar_url", by.get(m["id_a"] if side == "a" else m["id_b"]))
+    out["lang_a"], out["lang_b"] = ta.lang or "ja", tb.lang or "ja"
+    try:
+        out["verdict"] = json.loads(_cmp_file(ta, tb, localize.lang()).read_text())
+    except (FileNotFoundError, ValueError):
+        out["verdict"] = None
+    return out
+
+
+@app.post("/api/compare/verdict")
+def compare_verdict(a: str, b: str, regenerate: bool = False, user: User = auth.CurrentUser):
+    """Claude reads both results and the statistics and writes the decision (cached; ~20-40 s)."""
+    from core import compare as cmp_mod
+    ta, ra, tb, rb = _cmp_pair(a, b, user)
+    lang = localize.lang()
+    f = _cmp_file(ta, tb, lang)
+    if not regenerate and f.exists():
+        return json.loads(f.read_text())
+    llm.current_user.set(user.email)
+    llm.check_budget(user.email)
+    linked = tb.panel_from == ta.id or ta.panel_from == tb.id
+    c = cmp_mod.compare(summary_out(ta), ra, summary_out(tb), rb, linked)
+    try:
+        v = cmp_mod.verdict(c, ra, rb, lang)
+    except llm.BudgetExceeded:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("adlens").warning("compare verdict failed: %s", e)
+        raise HTTPException(502, "Could not write the verdict. Try again.") from None
+    f.write_text(json.dumps(v, ensure_ascii=False))
+    return v
+
+
+# ---------------- share links: one finished report, read-only, no sign-in ----------------
+SHARE_RE = re.compile(r"[A-Za-z0-9_-]{22,43}")
+
+
+@app.post("/api/tests/{test_id}/share")
+def share_test(test_id: str, user: User = auth.CurrentUser):
+    """Create (or return) the read-only link. Anyone with the link sees the report; nothing on it costs money."""
+    t = own_test(test_id, user)
+    if t.status != "done":
+        raise HTTPException(409, "Share the test when it has finished.")
+    from sqlalchemy import update
+    with db.session() as s:   # only set when empty, so two clicks at once agree on one link
+        s.exec(update(Test).where(Test.id == t.id, Test.share_token.is_(None))
+               .values(share_token=__import__("secrets").token_urlsafe(18)))
+        s.commit()
+        return {"share_token": s.get(Test, t.id).share_token}
+
+
+@app.delete("/api/tests/{test_id}/share", status_code=204)
+def unshare_test(test_id: str, user: User = auth.CurrentUser):
+    t = own_test(test_id, user)
+    with db.session() as s:
+        row = s.get(Test, t.id)
+        row.share_token = None
+        s.add(row)
+        s.commit()
+
+
+def _shared(token: str) -> Test:
+    """`sample` is the public demo report (SAMPLE_SHARE_TOKEN), linked from the sign-in page."""
+    real = os.getenv("SAMPLE_SHARE_TOKEN", "") if token == "sample" else token
+    if not SHARE_RE.fullmatch(real or ""):
+        raise HTTPException(404, "This link is not valid or was turned off.")
+    with db.session() as s:
+        t = s.exec(select(Test).where(Test.share_token == real)).first()
+    if not t or t.status != "done":
+        raise HTTPException(404, "This link is not valid or was turned off.")
+    return t
+
+
+@app.get("/api/share/sample/available")
+def sample_available():
+    try:
+        _shared("sample")
+        return {"available": True}
+    except HTTPException:
+        return {"available": False}
+
+
+@app.get("/api/share/{token}")
+def shared_test(token: str, response: Response):
+    t = _shared(token)
+    base = f"/api/share/{token}"
+    out = _test_out(t)
+    own = {p["id"] for p in _result(t)["personas"] if not (p.get("source_id") or p.get("library_id"))}
+    for p in out["personas"]:
+        p["avatar_url"] = f"{base}/avatar/{p['id']}.jpg"
+        if p["id"] in own:   # people from the owner's own CSV: no names or private columns on a public link
+            for k in ("income", "interests", "media", "values", "profile"):
+                p.pop(k, None)
+            p["name"] = f"Viewer {p['id'][1:].lstrip('0') or '0'}"
+    out.update(media_url=f"{base}/media", thumb_url=f"{base}/thumb.jpg", api_base=base, read_only=True,
+               context="", panel_from=None)
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return out
+
+
+@app.get("/api/share/{token}/media")
+def shared_media(token: str):
+    return _redirect(db.test_dir(_shared(token).id) / "media.bin", expires=1800, cache=False)
+
+
+@app.get("/api/share/{token}/thumb.jpg")
+def shared_thumb(token: str):
+    return _redirect(db.test_dir(_shared(token).id) / "thumb.jpg", expires=1800, cache=False)
+
+
+@app.get("/api/share/{token}/avatar/{pid}.jpg")
+def shared_avatar(token: str, pid: str):
+    """Only portraits that already exist: a public link never draws new ones."""
+    t = _shared(token)
+    if not re.fullmatch(r"P\d{3}", pid):
+        raise HTTPException(404, "Not found.")
+    p = next((x for x in _result(t)["personas"] if x.get("id") == pid), None)
+    src = p and (p.get("source_id") or p.get("library_id"))
+    p = (_persona_by_source(src) if src else p) or None
+    if not p or avatars.cached(p) is None:
+        raise HTTPException(404, "No portrait.")
+    return _redirect(avatars.CACHE / f"{avatars.key(p)}.jpg", expires=1800, cache=False)
+
+
+@app.get("/api/share/{token}/report")
+def shared_report(token: str):
+    d = db.test_dir(_shared(token).id)
+    try:
+        return {"status": "ready", "report": json.loads((d / "report.json").read_text())}
+    except (FileNotFoundError, ValueError):
+        return {"status": "none", "report": None}
+
+
+@app.get("/api/share/{token}/market")
+def shared_market(token: str):
+    d = db.test_dir(_shared(token).id)
+    try:
+        m = json.loads((d / "market.json").read_text())
+        m["queries"] = []   # search queries can echo the private note about the ad
+        return {"status": "ready", "available": True, "market": m}
+    except (FileNotFoundError, ValueError):
+        return {"status": "none", "available": False, "market": None}
+
+
+@app.get("/api/share/{token}/report.pptx")
+def shared_pptx(token: str):
+    t = _shared(token)
+    d = db.test_dir(t.id)
+    try:
+        report = json.loads((d / "report.json").read_text())
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(404, "No report yet.") from None
+    from core.pptx_export import build_pptx
+    data = build_pptx(report, _result(t), t.name)
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    headers={"Content-Disposition": f'attachment; filename="adlens-report-{t.id}.pptx"'})
 
 
 try:  # decision report + exports (separate module)

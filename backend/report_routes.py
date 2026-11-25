@@ -159,7 +159,7 @@ def get_market(test_id: str, user=CurrentUser):
 
 @router.post("/api/tests/{test_id}/market")
 def create_market(test_id: str, regenerate: bool = False, user=CurrentUser):
-    """Runs inside the request (~1-2 min: Gemini web research, then Claude ties it to the panel).
+    """Runs inside the request (~1-2 min: Claude web research, then Claude ties it to the panel).
     An existing analysis is returned as is unless `regenerate=true` (each run costs money)."""
     from core import llm, market
     t, d = _owned_test(test_id, user)
@@ -168,7 +168,7 @@ def create_market(test_id: str, regenerate: bool = False, user=CurrentUser):
     if t.status != "done":
         raise HTTPException(409, "The test is not finished yet.")
     if not market.available():
-        raise HTTPException(503, "Market research is not configured (GEMINI_API_KEY).")
+        raise HTTPException(503, "Market research is not configured (ANTHROPIC_API_KEY).")
     result = json.loads((d / "result.json").read_text())
     llm.current_user.set(user.email)
     try:

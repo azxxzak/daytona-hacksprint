@@ -1,8 +1,9 @@
-"""Market context for a test: live web research (Gemini + Google Search) joined to the panel's reactions (Claude).
+"""Market context for a test: live web research joined to the panel's reactions. Both steps run on Claude.
 
-Step 1 — research (Gemini with the google_search tool): identify the product/brand/category from the ad (context,
-          transcript, what viewers looked at) and collect current Japanese market facts, competitors, trends,
-          prices. Grounding metadata gives the web sources; we number them and mark each supported sentence [n].
+Step 1 — research (Claude with the web_search server tool): identify the product/brand/category from the ad
+          (context, transcript, what viewers looked at) and collect current Japanese market facts, competitors,
+          trends, prices. Every sentence Claude bases on a page carries citations; we number the pages and mark
+          each cited sentence [n].
 Step 2 — synthesis (Claude): set the research against the panel (themes, segment engagement, quotes) and return
           structured JSON. Every market fact must cite source numbers; nothing may be invented. Prose is written
           in the test's language.
@@ -15,19 +16,18 @@ import re
 import time
 from datetime import datetime, timezone
 
-import httpx
+import anthropic
 
 from core import llm
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-GEMINI_FALLBACK = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-pro-latest")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-# rough list prices (USD) for the usage log: per 1M input / output tokens, plus one grounded search request
-GEMINI_PRICE = (0.30, 2.50, 0.035)
+RESEARCH_MODEL = os.getenv("RESEARCH_MODEL", llm.CHAT_MODEL)
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 8,
+                   "user_location": {"type": "approximate", "country": "JP", "timezone": "Asia/Tokyo"}}
+SEARCH_USD = 0.01          # list price: $10 per 1,000 searches
 
 
 def available() -> bool:
-    return bool(os.getenv("GEMINI_API_KEY"))
+    return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
 # ----------------------------------------------------------------------------- inputs
@@ -51,8 +51,8 @@ def _brief(test_name: str, context: str, result: dict) -> str:
             f"Main reaction themes: {themes or '-'}")
 
 
-RESEARCH_PROMPT = """You are a senior market analyst for the Japanese market. Use Google Search. Write a factual
-research brief in English for a marketer who is testing the ad below with a consumer panel.
+RESEARCH_PROMPT = """You are a senior market analyst for the Japanese market. Use the web search tool (search in Japanese
+and in English; up to 8 searches, so plan them). Write a factual research brief in English for a marketer who is testing the ad below with a consumer panel.
 
 {brief}
 
@@ -68,66 +68,91 @@ Rules: every figure must come from a source you found, with its year. Prefer Jap
 If you cannot find something, say "not found" instead of guessing."""
 
 
-# ----------------------------------------------------------------------------- step 1: Gemini research
+# ----------------------------------------------------------------------------- step 1: web research
 
-def _gemini(prompt: str, model: str) -> dict:
-    r = httpx.post(GEMINI_URL.format(model=model), timeout=200,
-                   headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-                   json={"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                         "tools": [{"google_search": {}}],
-                         "generationConfig": {"temperature": 0.2}})
-    if r.status_code != 200:
-        raise RuntimeError(f"Gemini {r.status_code}: {r.text[:200]}")
-    return r.json()
+def _research_call(messages: list, deadline: float):
+    """One streamed request with retries on overload/5xx; the limiter sees every attempt."""
+    attempt = 0
+    while True:
+        try:
+            with llm.limiter:
+                with llm.client().messages.stream(model=RESEARCH_MODEL, max_tokens=16000, tools=[WEB_SEARCH_TOOL],
+                                                  messages=messages, timeout=max(10.0, deadline - time.time())) as st:
+                    msg = st.get_final_message()
+            llm.limiter.success()
+            return msg
+        except anthropic.RateLimitError as e:
+            llm.limiter.busy()
+            last = e
+        except anthropic.APIStatusError as e:
+            if e.status_code < 500:
+                raise
+            last = e
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError) as e:
+            last = e
+        attempt += 1
+        delay = min(20.0, 2 ** attempt)
+        if time.time() + delay > deadline:
+            raise last
+        time.sleep(delay)
 
 
 def research(brief: str, user: str = "system") -> dict:
     """-> {text (with [n] markers), sources [{id, title, url}], queries, model}."""
     llm.check_budget(user)
-    last = None
-    for model in dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK]):
-        try:
-            d = _gemini(RESEARCH_PROMPT.format(brief=brief), model)
-            break
-        except Exception as e:  # noqa: BLE001 - try the fallback model once
-            last = e
-    else:
-        raise RuntimeError(f"web research failed: {last}")
-    cand = (d.get("candidates") or [{}])[0]
-    text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []) if not p.get("thought"))
-    gm = cand.get("groundingMetadata") or {}
-    chunks = gm.get("groundingChunks") or []
-    sources, idx_of = [], {}
-    for i, ch in enumerate(chunks):
-        w = ch.get("web") or {}
-        if not w.get("uri"):
-            continue
-        idx_of[i] = len(sources) + 1
-        sources.append({"id": len(sources) + 1, "title": w.get("title") or "source", "url": w["uri"]})
-    # mark each grounded sentence with its source numbers so the synthesis can cite them
-    marked, pos = text, 0
-    for sup in gm.get("groundingSupports") or []:
-        seg = (sup.get("segment") or {}).get("text") or ""
-        ids = sorted({idx_of[i] for i in sup.get("groundingChunkIndices") or [] if i in idx_of})
-        if not seg or not ids:
-            continue
-        at = marked.find(seg, pos)
-        if at < 0:
-            at = marked.find(seg)
-        if at < 0:
-            continue
-        end = at + len(seg)
-        tag = "[" + ",".join(str(i) for i in ids) + "]"
-        marked = marked[:end] + " " + tag + marked[end:]
-        pos = end + len(tag) + 1
-    u = d.get("usageMetadata") or {}
-    tin, tout = u.get("promptTokenCount", 0), (u.get("candidatesTokenCount", 0) + u.get("thoughtsTokenCount", 0))
-    usd = (tin * GEMINI_PRICE[0] + tout * GEMINI_PRICE[1]) / 1e6 + GEMINI_PRICE[2]
+    messages = [{"role": "user", "content": RESEARCH_PROMPT.format(brief=brief)}]
+    # 170 s for research leaves room for the synthesis call inside Vercel's 300 s function limit
+    deadline, blocks, usd, searches, tin, tout = time.time() + 170, [], 0.0, 0, 0, 0
+    stop = None
     try:
-        llm.record_usage(user, "market-research", model, tin, tout, usd)
-    except Exception:  # noqa: BLE001 - usage logging must never break the feature
-        pass
-    return {"text": marked, "sources": sources, "queries": gm.get("webSearchQueries") or [], "model": model}
+        for _ in range(4):   # server-side tool loops may pause; send the turn back to let it continue
+            if time.time() > deadline:
+                raise RuntimeError("web research ran out of time")
+            msg = _research_call(messages, deadline)
+            u = msg.usage
+            n = getattr(getattr(u, "server_tool_use", None), "web_search_requests", 0) or 0
+            searches += n
+            tin += getattr(u, "input_tokens", 0) or 0
+            tout += getattr(u, "output_tokens", 0) or 0
+            usd += llm.cost_usd(RESEARCH_MODEL, u) + n * SEARCH_USD
+            blocks.extend(msg.content)
+            stop = msg.stop_reason
+            if stop != "pause_turn":
+                break
+            messages = messages + [{"role": "assistant", "content": msg.content}]
+    finally:   # money already spent is always counted, even when a later turn fails
+        try:
+            llm.record_usage(user, "market-research", RESEARCH_MODEL, tin, tout, round(usd, 6))
+        except Exception:  # noqa: BLE001 - usage logging must never break the feature
+            pass
+    if stop == "pause_turn":
+        raise RuntimeError("web research did not finish")
+    sources, idx, queries, parts = [], {}, [], []
+
+    def num(url, title):
+        if url not in idx:
+            idx[url] = len(sources) + 1
+            sources.append({"id": idx[url], "title": title or url, "url": url})
+        return idx[url]
+
+    for b in blocks:
+        kind = getattr(b, "type", "")
+        if kind == "server_tool_use" and getattr(b, "name", "") == "web_search":
+            q = (getattr(b, "input", None) or {}).get("query")
+            if q:
+                queries.append(q)
+        elif kind == "web_search_tool_result" and isinstance(getattr(b, "content", None), list):
+            for r in b.content:
+                if getattr(r, "url", None):
+                    num(r.url, getattr(r, "title", ""))
+        elif kind == "text":
+            ids = sorted({num(c.url, getattr(c, "title", "")) for c in (getattr(b, "citations", None) or [])
+                          if getattr(c, "url", None)})
+            parts.append(b.text + (" [" + ",".join(map(str, ids)) + "]" if ids else ""))
+    text = "".join(parts).strip()
+    if not text:
+        raise RuntimeError("web research returned no text")
+    return {"text": text, "sources": sources, "queries": queries, "model": RESEARCH_MODEL, "searches": searches}
 
 
 # ----------------------------------------------------------------------------- step 2: Claude synthesis

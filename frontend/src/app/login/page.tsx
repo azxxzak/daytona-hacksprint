@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import Link from "next/link";
+import { useEffect, useId, useState } from "react";
+import { Eye } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { LangSwitch } from "@/components/app-shell";
@@ -16,7 +18,11 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const errId = useId();
+  const [sample, setSample] = useState(false);
   useDocTitle(t("login.title"));
+  useEffect(() => {
+    api<{ available: boolean }>("/api/share/sample/available", { noRedirect: true }).then((r) => setSample(r.available)).catch(() => {});
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,6 +83,11 @@ export default function LoginPage() {
             {busy ? t("login.submitting") : t("login.submit")}
           </Button>
         </form>
+        {sample && (
+          <Link href="/share/sample" className="mt-4 flex items-center justify-center gap-2 rounded-[18px] border border-line px-5 py-4 text-sm font-medium hover:bg-surface">
+            <Eye size={16} aria-hidden /> {t("login.sample")}
+          </Link>
+        )}
       </div>
     </main>
   );
