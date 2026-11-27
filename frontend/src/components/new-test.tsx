@@ -15,7 +15,7 @@ import { PersonaSheet } from "./persona-sheet";
 import { FacetField, type FacetItem } from "./facet-field";
 import { PeopleBrowser } from "./people-browser";
 import { useToast } from "./toast";
-import { Avatar, Button, Card, Dialog, ErrorNote, cx, useDocTitle } from "./ui";
+import { Avatar, Button, Card, Dialog, ErrorNote, cx, fieldClass, useDocTitle } from "./ui";
 
 const AGE_MIN = 15;
 const AGE_MAX = 80;
@@ -101,11 +101,19 @@ function formatBytes(n: number) {
   return n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
 }
 
-function StepHead({ n, title }: { n: number; title: string }) {
+function StepHead({ n, title, done }: { n: number; title: string; done?: boolean }) {
   return (
-    <div className="flex items-center gap-3 border-b-2 border-ink pb-3">
-      <span className="tnum grid size-8 shrink-0 place-items-center rounded-full bg-ink text-sm font-bold text-lime" aria-hidden>{n}</span>
-      <h2 className="text-2xl font-bold leading-tight tracking-tight sm:text-[26px]">{title}</h2>
+    <div className="flex items-center gap-3.5 border-b border-line pb-4">
+      <span
+        className={cx(
+          "tnum grid size-9 shrink-0 place-items-center rounded-xl text-sm font-bold transition-colors",
+          done ? "bg-lime text-ink shadow-[inset_0_0_0_1.5px_rgb(17_17_17)]" : "bg-ink text-lime",
+        )}
+        aria-hidden
+      >
+        {done ? <Check size={16} strokeWidth={3} /> : n}
+      </span>
+      <h2 className="text-[22px] font-bold leading-tight tracking-[-0.02em] sm:text-[26px]">{title}</h2>
     </div>
   );
 }
@@ -114,7 +122,7 @@ function StepHead({ n, title }: { n: number; title: string }) {
 function SamePanel({ test }: { test: Test }) {
   const { t } = useI18n();
   return (
-    <div className="mt-6 rounded-card bg-surface p-5 sm:p-6">
+    <div className="mt-6 rounded-card bg-surface shadow-card p-5 sm:p-6">
       <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("ab.samePanel")}</p>
       <p className="mt-2 text-lg font-bold leading-snug">{t("ab.samePanelTitle", { n: test.personas.length, name: test.name })}</p>
       <p className="mt-1 text-sm leading-relaxed text-mute">{t("ab.samePanelBody")}</p>
@@ -315,7 +323,7 @@ export function NewTest() {
 
   const startButton = (full?: boolean) => (
     busy ? (
-      <div className={cx("flex items-center gap-3 rounded-full bg-ink py-1 pl-5 pr-1 text-white", full ? "w-full" : "h-12")} role="status">
+      <div className={cx("flex items-center gap-3 rounded-full bg-white/10 py-1 pl-5 pr-1 text-white ring-1 ring-white/10", full ? "w-full" : "h-12")} role="status">
         <div className="h-1.5 min-w-16 flex-1 overflow-hidden rounded-full bg-white/20">
           <div className="h-full bg-lime transition-[width]" style={{ width: `${phase === "create" ? 100 : pct}%` }} />
         </div>
@@ -325,7 +333,7 @@ export function NewTest() {
         </button>
       </div>
     ) : (
-      <Button size="lg" className={cx(full && "w-full")} disabled={!ready} onClick={start}>
+      <Button variant="lime" size="lg" className={cx(full && "w-full")} disabled={!ready} onClick={start}>
         <Play size={16} aria-hidden /> {t("new.start")}
       </Button>
     )
@@ -340,14 +348,14 @@ export function NewTest() {
         <div className="min-w-0 space-y-14">
           {/* STEP 1 */}
           <section aria-labelledby="step1">
-            <div id="step1"><StepHead n={1} title={t("new.step1")} /></div>
+            <div id="step1"><StepHead n={1} title={t("new.step1")} done={audienceOk} /></div>
             {fromTest ? <SamePanel test={fromTest} /> : (
             <>
-            <div role="radiogroup" aria-label={t("new.src")} className="mt-6 grid w-full grid-cols-3 gap-1 rounded-[14px] bg-surface p-1 sm:inline-grid sm:w-auto sm:rounded-full">
+            <div role="radiogroup" aria-label={t("new.src")} className="mt-6 grid w-full grid-cols-3 gap-0.5 rounded-[14px] bg-[#e7e7ea] p-1 sm:inline-grid sm:w-auto sm:rounded-full">
               {([["bank", "new.srcBank"], ["library", "new.srcLibrary"], ["csv", "new.srcCsv"]] as const).map(([k, label]) => (
                 <button
                   key={k} type="button" role="radio" aria-checked={source === k} onClick={() => setSource(k)}
-                  className={cx("min-h-9 rounded-[10px] px-2 py-1.5 text-[13px] font-medium leading-tight transition-colors sm:rounded-full sm:px-4", source === k ? "bg-ink text-white" : "text-mute hover:text-ink")}
+                  className={cx("min-h-9 rounded-[10px] px-2 py-1.5 text-[13px] font-medium leading-tight transition-[color,background-color,box-shadow] sm:rounded-full sm:px-4", source === k ? "bg-surface text-ink shadow-[0_1px_3px_rgb(17_17_17/0.14)]" : "text-mute hover:text-ink")}
                 >
                   {t(label)}
                 </button>
@@ -414,7 +422,7 @@ export function NewTest() {
                     {(["F", "M"] as const).map((g) => (
                       <button
                         key={g} type="button" aria-pressed={genders[g]} onClick={() => toggleGender(g)}
-                        className={cx("h-9 flex-1 rounded-full border text-sm font-medium transition-colors", genders[g] ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:text-ink")}
+                        className={cx("flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border text-sm font-medium transition-colors", genders[g] ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:border-ink/40 hover:text-ink")}
                       >
                         {g === "F" ? t("new.female") : t("new.male")}
                       </button>
@@ -465,7 +473,7 @@ export function NewTest() {
                     <li key={p.id}><PersonaCard persona={p} meta={p.profile?.meta} title={p.profile?.headline || p.name} onDetails={p.profile ? () => setSheet(p) : undefined} /></li>
                   ))}
                   {!personas && !previewError && Array.from({ length: Math.min(count, 10) }, (_, i) => (
-                    <li key={i}><div className="pulse aspect-[4/5] rounded-card bg-surface" style={{ animationDelay: `${i * 80}ms` }} /><div className="mt-2 h-2.5 w-2/3 rounded bg-surface" /><div className="mt-1.5 h-3 w-full rounded bg-surface" /></li>
+                    <li key={i}><div className="shimmer aspect-[4/5] rounded-card" style={{ animationDelay: `${i * 80}ms` }} /><div className="shimmer mt-2 h-2.5 w-2/3 rounded" /><div className="shimmer mt-1.5 h-3 w-full rounded" /></li>
                   ))}
                 </ul>
               </div>
@@ -476,13 +484,17 @@ export function NewTest() {
 
           {/* STEP 2 */}
           <section aria-labelledby="step2">
-            <div id="step2"><StepHead n={2} title={t("new.step2")} /></div>
+            <div id="step2"><StepHead n={2} title={t("new.step2")} done={!!file} /></div>
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                 onDragLeave={() => setDragging(false)}
                 onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files[0]); }}
-                className={cx("relative grid min-h-[260px] min-w-0 place-items-center rounded-card border-2 border-dashed p-6 text-center transition-colors", dragging ? "border-ink bg-white" : "border-line bg-surface", file && "border-solid border-transparent")}
+                onClick={(e) => { if (!file && e.target === e.currentTarget) fileInput.current?.click(); }}
+                className={cx(
+                  "relative grid min-h-[280px] min-w-0 place-items-center overflow-hidden rounded-[18px] border-2 border-dashed p-6 text-center transition-[border-color,background-color,box-shadow]",
+                  file ? "border-solid border-transparent bg-surface shadow-card" : dragging ? "border-ink bg-lime/10" : "dots-ink cursor-pointer border-[#d6d6db] bg-surface hover:border-ink/40",
+                )}
               >
                 <input
                   ref={fileInput} id="media-file" type="file" className="sr-only" accept=".mp4,.mov,.webm,.png,.jpg,.jpeg,video/*,image/png,image/jpeg"
@@ -507,11 +519,13 @@ export function NewTest() {
                     </div>
                   </div>
                 ) : (
-                  <div>
-                    <div className="mx-auto grid size-12 place-items-center rounded-full bg-ink text-lime"><Upload size={20} aria-hidden /></div>
-                    <p className="mt-4 text-lg font-bold">{t("new.drop")}</p>
-                    <button type="button" onClick={() => fileInput.current?.click()} className="mt-1 text-sm underline underline-offset-4">{t("new.dropOr")}</button>
-                    <p id={hintId} className="mt-3 text-xs text-mute">{t("new.dropHint")}</p>
+                  <div className="pointer-events-none">
+                    <div className={cx("mx-auto grid size-14 place-items-center rounded-2xl bg-ink text-lime shadow-[0_10px_24px_-10px_rgb(17_17_17/0.6)] transition-transform duration-300", dragging && "-translate-y-1 scale-105")}>
+                      <Upload size={22} aria-hidden />
+                    </div>
+                    <p className="mt-5 text-lg font-bold tracking-[-0.01em]">{t("new.drop")}</p>
+                    <button type="button" onClick={() => fileInput.current?.click()} className="pointer-events-auto mt-1 text-sm font-medium underline decoration-lime decoration-2 underline-offset-4 hover:decoration-ink">{t("new.dropOr")}</button>
+                    <p id={hintId} className="mt-4 text-xs text-mute">{t("new.dropHint")}</p>
                   </div>
                 )}
               </div>
@@ -519,13 +533,13 @@ export function NewTest() {
                 <label htmlFor={nameId} className="text-sm font-medium">{t("new.name")}</label>
                 <input
                   id={nameId} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder={t("new.namePlaceholder")}
-                  className="mb-5 mt-2 h-11 w-full rounded-card border border-line bg-surface px-4 text-sm placeholder:text-mute/70"
+                  className={cx(fieldClass, "mb-5 mt-2 h-11 px-4")}
                 />
                 <label htmlFor={ctxId} className="text-sm font-medium">{t("new.context")}</label>
                 <p className="mt-0.5 text-xs text-mute">{t("new.contextHint")}</p>
                 <textarea
                   id={ctxId} rows={5} value={context} maxLength={1000} onChange={(e) => setContext(e.target.value)} placeholder={t("new.contextPlaceholder")}
-                  className="mt-2 w-full resize-y rounded-card border border-line bg-surface p-4 text-sm placeholder:text-mute/70"
+                  className={cx(fieldClass, "mt-2 resize-y p-4 leading-relaxed")}
                 />
               </div>
             </div>
@@ -582,35 +596,50 @@ export function NewTest() {
   );
 
   function renderSummary() {
+    const tick = (ok: boolean) => (
+      <span className={cx("grid size-5 shrink-0 place-items-center rounded-full transition-colors", ok ? "bg-lime text-ink" : "border border-white/25")} aria-hidden>
+        {ok && <Check size={11} strokeWidth={3} />}
+      </span>
+    );
     return (
-      <Card className="p-6">
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("new.summary")}</p>
-        <dl className="mt-4 space-y-4 text-sm">
-          <div>
-            <dt className="flex items-center gap-2 text-xs text-mute"><span className={cx("grid size-4 place-items-center rounded-full", audienceOk ? "bg-ink text-lime" : "border border-line")} aria-hidden>{audienceOk && <Check size={10} strokeWidth={3} />}</span>{t("new.sumAudience")}</dt>
-            <dd className="mt-1 font-medium leading-snug">{audienceSummary || t("new.sumNone")}</dd>
-            {source === "bank" && (regions.length > 0 || occupations.length > 0) && <dd className="mt-0.5 text-xs text-mute">{[...regions.map((r) => facets.data?.regions.find((x) => x.name === r)?.label || r), ...occupations.map((o) => facets.data?.occupations.find((x) => x.name === o)?.label || o)].join(" · ")}</dd>}
-          </div>
-          <div>
-            <dt className="flex items-center gap-2 text-xs text-mute"><span className={cx("grid size-4 place-items-center rounded-full", file ? "bg-ink text-lime" : "border border-line")} aria-hidden>{file && <Check size={10} strokeWidth={3} />}</span>{t("new.sumAd")}</dt>
-            <dd className="mt-1 truncate font-medium">{file ? file.name : t("new.sumNone")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-mute">{t("new.sumTime")}</dt>
-            <dd className="tnum mt-1 text-2xl font-bold">{t("new.sumTimeVal", { n: minutes })}</dd>
-            <dd className="mt-1 text-xs leading-relaxed text-mute">{t("new.sumHint")}</dd>
-            {panelCount > 0 && panelCount < 20 && <dd className="mt-2 rounded-lg bg-canvas px-3 py-2 text-xs leading-relaxed text-ink/75">{t("new.smallPanel")}</dd>}
-          </div>
-        </dl>
-        {submitError && (
-          <div role="alert" className="mt-4 rounded-xl bg-danger/5 p-3 text-sm text-danger">
-            <p>{submitError.text}</p>
-            {submitError.retry && <button type="button" onClick={start} className="mt-2 inline-flex items-center gap-1.5 font-medium underline underline-offset-4"><RefreshCw size={13} aria-hidden /> {t("new.retry")}</button>}
-          </div>
-        )}
-        <div className="mt-5">{startButton(true)}</div>
-        {!file && <p className="mt-2 text-center text-xs text-mute">{t("new.needFile")}</p>}
-      </Card>
+      <div className="on-dark relative overflow-hidden rounded-[22px] bg-ink p-6 text-white shadow-lift">
+        <div aria-hidden className="dots absolute inset-0" />
+        <div aria-hidden className="absolute -right-20 -top-20 size-48 rounded-full bg-lime/20 blur-3xl" />
+        <div className="relative">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">{t("new.summary")}</p>
+          <dl className="mt-5 space-y-5 text-sm">
+            <div className="flex gap-3">
+              {tick(audienceOk)}
+              <div className="min-w-0">
+                <dt className="text-xs text-white/50">{t("new.sumAudience")}</dt>
+                <dd className="mt-0.5 font-medium leading-snug">{audienceSummary || t("new.sumNone")}</dd>
+                {source === "bank" && (regions.length > 0 || occupations.length > 0) && <dd className="mt-0.5 text-xs text-white/50">{[...regions.map((r) => facets.data?.regions.find((x) => x.name === r)?.label || r), ...occupations.map((o) => facets.data?.occupations.find((x) => x.name === o)?.label || o)].join(" · ")}</dd>}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              {tick(!!file)}
+              <div className="min-w-0">
+                <dt className="text-xs text-white/50">{t("new.sumAd")}</dt>
+                <dd className="mt-0.5 truncate font-medium">{file ? file.name : t("new.sumNone")}</dd>
+              </div>
+            </div>
+            <div className="border-t border-white/10 pt-5">
+              <dt className="text-xs text-white/50">{t("new.sumTime")}</dt>
+              <dd className="tnum mt-1 text-[32px] font-bold leading-none tracking-[-0.02em]">{t("new.sumTimeVal", { n: minutes })}</dd>
+              <dd className="mt-2 text-xs leading-relaxed text-white/50">{t("new.sumHint")}</dd>
+              {panelCount > 0 && panelCount < 20 && <dd className="mt-3 rounded-xl bg-white/[0.07] px-3 py-2 text-xs leading-relaxed text-white/75 ring-1 ring-white/10">{t("new.smallPanel")}</dd>}
+            </div>
+          </dl>
+          {submitError && (
+            <div role="alert" className="mt-4 rounded-xl bg-[#ff6b5e]/15 p-3 text-sm text-[#ffb4ab]">
+              <p>{submitError.text}</p>
+              {submitError.retry && <button type="button" onClick={start} className="mt-2 inline-flex items-center gap-1.5 font-medium underline underline-offset-4"><RefreshCw size={13} aria-hidden /> {t("new.retry")}</button>}
+            </div>
+          )}
+          <div className="mt-6">{startButton(true)}</div>
+          {!file && <p className="mt-2.5 text-center text-xs text-white/45">{t("new.needFile")}</p>}
+        </div>
+      </div>
     );
   }
 }

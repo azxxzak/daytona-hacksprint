@@ -12,6 +12,7 @@ import type { TestSummary } from "@/lib/types";
 import { useI18n } from "./i18n-provider";
 import { LongProgress } from "./long-progress";
 import { useToast } from "./toast";
+import { Select } from "./menu";
 import { Avatar, Button, Card, ErrorNote, SectionHeader, Skeleton, cx, useDocTitle } from "./ui";
 
 type Side = TestSummary & {
@@ -33,16 +34,21 @@ const ID = /^[a-f0-9]{12}$/;
 const COLOR = { A: "#9a9aa0", B: "#111111" } as const;
 
 function Picker({ label, value, other, tests, onChange }: { label: "A" | "B"; value: string; other: string; tests: TestSummary[]; onChange: (id: string) => void }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const pickHint = (x: TestSummary) =>
+    `${new Date(x.created_at).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { month: "short", day: "numeric" })} · ${t("dash.viewers", { n: x.viewers })}`;
   return (
-    <label className="flex min-w-0 flex-1 items-center gap-3 rounded-card bg-surface p-3">
+    <div className="flex min-w-0 flex-1 items-center gap-3 rounded-card bg-surface shadow-card p-3">
       <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full text-sm font-bold text-white" style={{ background: COLOR[label] }}>{label}</span>
-      <span className="sr-only">{t("cmp.version", { v: label })}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 text-sm">
-        <option value="">{t("cmp.pick")}</option>
-        {tests.map((x) => <option key={x.id} value={x.id} disabled={x.id === other}>{x.name}</option>)}
-      </select>
-    </label>
+      <Select
+        variant="field"
+        label={t("cmp.version", { v: label })}
+        value={value}
+        onChange={onChange}
+        placeholder={t("cmp.pick")}
+        options={tests.map((x) => ({ value: x.id, label: x.name, hint: pickHint(x), disabled: x.id === other }))}
+      />
+    </div>
   );
 }
 
@@ -180,11 +186,11 @@ export function Compare() {
         <Link href={a ? `/tests/${a}` : "/"} className="mb-4 inline-flex items-center gap-1.5 text-sm text-mute hover:text-ink">
           <ArrowLeft size={15} aria-hidden /> {t("common.back")}
         </Link>
-        <h1 className="text-3xl font-bold tracking-tight">{t("cmp.title")}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-mute">{t("cmp.sub")}</p>
+        <h1 className="text-[30px] font-bold leading-tight tracking-[-0.02em] sm:text-[40px]">{t("cmp.title")}</h1>
+        <p className="mt-2 max-w-2xl text-[15px] text-mute">{t("cmp.sub")}</p>
         <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
           <Picker label="A" value={a} other={b} tests={done} onChange={(id) => set("a", id)} />
-          <button type="button" onClick={swap} disabled={!a || !b} aria-label={t("cmp.swap")} className="grid size-10 shrink-0 place-items-center self-center rounded-full border border-line bg-surface hover:bg-canvas disabled:opacity-40">
+          <button type="button" onClick={swap} disabled={!a || !b} aria-label={t("cmp.swap")} className="grid size-10 shrink-0 place-items-center self-center rounded-full bg-ink text-lime shadow-card transition-transform hover:rotate-180 disabled:bg-surface disabled:text-mute disabled:opacity-60 disabled:hover:rotate-0">
             <ArrowLeftRight size={16} aria-hidden />
           </button>
           <Picker label="B" value={b} other={a} tests={done} onChange={(id) => set("b", id)} />
@@ -245,7 +251,7 @@ export function Compare() {
 
           <section>
             <SectionHeader as="h2" label={t("cmp.l.seg")} title={t("cmp.t.seg")} />
-            <div className="mt-5 overflow-hidden rounded-card bg-surface">
+            <div className="mt-5 overflow-hidden rounded-card bg-surface shadow-card">
               <ul className="divide-y divide-line">
                 {c.segments.map((s) => {
                   const d = s.a != null && s.b != null ? s.b - s.a : null;
@@ -276,7 +282,7 @@ export function Compare() {
               <SectionHeader as="h2" label={t("cmp.l.movers")} title={t("cmp.t.movers")} />
               <ul className="mt-5 grid gap-3 md:grid-cols-2">
                 {c.movers.map((m, i) => (
-                  <li key={i} className="rounded-card bg-surface p-5">
+                  <li key={i} className="rounded-card bg-surface shadow-card p-5">
                     <div className="flex items-center gap-3">
                       {m.avatar_url && <Avatar src={m.avatar_url} name={m.name} rounded="rounded-full" className="size-10 shrink-0" />}
                       <div className="min-w-0 flex-1">
@@ -308,7 +314,7 @@ export function Compare() {
               {(["A", "B"] as const).map((k) => {
                 const side = k === "A" ? c.a : c.b;
                 return (
-                  <div key={k} className="rounded-card bg-surface p-5">
+                  <div key={k} className="rounded-card bg-surface shadow-card p-5">
                     <p className="text-sm font-bold"><span style={{ color: COLOR[k] }}>{k}</span> · {side.name}</p>
                     <ul className="mt-3 space-y-2">
                       {side.themes.map((th) => (
@@ -328,7 +334,15 @@ export function Compare() {
       )}
 
       {!a || !b ? (
-        list.loading && !list.data ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : <p className="rounded-card bg-surface px-5 py-8 text-center text-sm text-mute">{t("cmp.empty")}</p>
+        list.loading && !list.data ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : (
+          <div className="dots-ink grid place-items-center rounded-[24px] border border-dashed border-[#d6d6db] px-5 py-14 text-center">
+            <div aria-hidden className="relative h-20 w-36">
+              <span className="absolute left-0 top-2 grid h-16 w-24 -rotate-6 place-items-center rounded-xl bg-surface text-lg font-bold text-[#9a9aa0] shadow-card">A</span>
+              <span className="absolute right-0 top-0 grid h-16 w-24 rotate-6 place-items-center rounded-xl bg-ink text-lg font-bold text-lime shadow-lift">B</span>
+            </div>
+            <p className="mt-6 max-w-sm text-sm text-mute">{t("cmp.empty")}</p>
+          </div>
+        )
       ) : null}
     </div>
   );

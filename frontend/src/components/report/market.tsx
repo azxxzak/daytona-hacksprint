@@ -103,7 +103,7 @@ export function MarketTab({ test }: { test: Test }) {
   }
 
   const m = data.market;
-  if (!m && test.read_only) return <p className="rounded-card bg-surface px-5 py-8 text-center text-sm text-mute">{t("share.noMarket")}</p>;
+  if (!m && test.read_only) return <p className="rounded-card bg-surface shadow-card px-5 py-8 text-center text-sm text-mute">{t("share.noMarket")}</p>;
   if (!m) {
     return (
       <Card className="grid gap-6 p-6 sm:p-8 md:grid-cols-[1fr_auto] md:items-center">
@@ -146,7 +146,7 @@ export function MarketTab({ test }: { test: Test }) {
       <Block label={t("mk.l.recs")} title={t("mk.t.recs")}>
         <ol className="space-y-3">
           {m.recommendations.map((r, i) => (
-            <li key={i} className="grid grid-cols-[2rem_1fr] gap-4 rounded-card bg-surface p-5">
+            <li key={i} className="grid grid-cols-[2rem_1fr] gap-4 rounded-card bg-surface shadow-card p-5">
               <span aria-hidden className="tnum grid size-8 place-items-center rounded-full bg-ink text-sm font-bold text-lime">{i + 1}</span>
               <div>
                 <p className="font-bold leading-snug">{r.action}</p>
@@ -158,7 +158,7 @@ export function MarketTab({ test }: { test: Test }) {
       </Block>
 
       <Block label={t("mk.l.fit")} title={t("mk.t.fit")}>
-        <div className="overflow-hidden rounded-card bg-surface">
+        <div className="overflow-hidden rounded-card bg-surface shadow-card">
           <div className="hidden grid-cols-[1fr_1fr_6rem] gap-6 border-b border-line px-5 py-3 text-xs font-medium text-mute md:grid">
             <span>{t("mk.col.market")}</span><span>{t("mk.col.panel")}</span><span className="text-right">{t("mk.col.verdict")}</span>
           </div>
@@ -178,14 +178,14 @@ export function MarketTab({ test }: { test: Test }) {
         <Block label={t("mk.l.market")} title={t("mk.t.market")}>
           <ul className="space-y-3">
             {m.market.map((x, i) => (
-              <li key={i} className="rounded-card bg-surface p-4 text-sm leading-relaxed">{x.point}<Cite ids={x.src} sources={S} /></li>
+              <li key={i} className="rounded-card bg-surface shadow-card p-4 text-sm leading-relaxed">{x.point}<Cite ids={x.src} sources={S} /></li>
             ))}
           </ul>
         </Block>
         <Block label={t("mk.l.trends")} title={t("mk.t.trends")}>
           <ul className="space-y-3">
             {m.trends.map((x, i) => (
-              <li key={i} className="rounded-card bg-surface p-4">
+              <li key={i} className="rounded-card bg-surface shadow-card p-4">
                 <p className="text-sm font-bold leading-snug">{x.trend}<Cite ids={x.src} sources={S} /></p>
                 <p className="mt-1.5 text-sm leading-relaxed text-ink/75">{x.so_what}</p>
               </li>
@@ -197,7 +197,7 @@ export function MarketTab({ test }: { test: Test }) {
       <Block label={t("mk.l.comp")} title={t("mk.t.comp")}>
         <ul className="grid gap-3 md:grid-cols-2">
           {m.competitors.map((c, i) => (
-            <li key={i} className="rounded-card bg-surface p-5">
+            <li key={i} className="rounded-card bg-surface shadow-card p-5">
               <p className="font-bold">{c.name}<Cite ids={c.src} sources={S} /></p>
               <p className="mt-2 text-sm leading-relaxed">{c.positioning}</p>
               <p className="mt-3 border-t border-line pt-3 text-sm leading-relaxed text-ink/75"><span className="font-semibold text-ink">{t("mk.vsAd")}: </span>{c.vs_ad}</p>
@@ -206,7 +206,7 @@ export function MarketTab({ test }: { test: Test }) {
         </ul>
       </Block>
 
-      <section aria-label={t("mk.sources")} className="rounded-card bg-surface p-5 sm:p-6">
+      <section aria-label={t("mk.sources")} className="rounded-card bg-surface shadow-card p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-bold">{t("mk.sources")} <span className="tnum font-normal text-mute">({S.length})</span></h3>
           {!test.read_only && <Button variant="outline" size="sm" onClick={() => run(true)}><RefreshCw size={14} aria-hidden /> {t("mk.rerun")}</Button>}

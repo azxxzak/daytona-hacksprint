@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
-import { Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { Flame, Pause, Play, UsersRound, Volume2, VolumeX } from "lucide-react";
 import { fmtTime, inSegment, thoughtOf, type SegmentKey } from "@/lib/format";
 import type { Gaze, Persona, Test } from "@/lib/types";
 import { useI18n } from "../i18n-provider";
 import { EvidenceLabel } from "../evidence";
-import { cx } from "../ui";
+import { Avatar, cx } from "../ui";
+import { InfoTip, Select } from "../menu";
 
 export type PlayerHandle = { seek: (t: number) => void };
 
@@ -148,6 +149,14 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
     // portraits for the moving faces: pre-rendered as small circles once they load
     const bubbles = new Map<string, HTMLCanvasElement>();
     for (const { p } of tracks) {
+      // until (or unless) the portrait loads: the initial on a dark disc, not a flat colour dot
+      const f = document.createElement("canvas");
+      f.width = f.height = 64;
+      const fc = f.getContext("2d")!;
+      fc.beginPath(); fc.arc(32, 32, 32, 0, Math.PI * 2); fc.fillStyle = "#2a2a2e"; fc.fill();
+      fc.fillStyle = "#fff"; fc.font = "600 28px system-ui, sans-serif"; fc.textAlign = "center"; fc.textBaseline = "middle";
+      fc.fillText(p.name.slice(0, 1), 32, 34);
+      bubbles.set(p.id, f);
       const im = new Image();
       im.decoding = "async";
       im.onload = () => {
@@ -300,35 +309,34 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
     if (v.paused) void v.play().catch(() => undefined); else v.pause();
   };
 
-  const sel = "h-9 rounded-full border border-line bg-surface px-3 text-[13px] font-medium";
+  const pill = (on: boolean) => cx(
+    "flex h-9 items-center gap-2 rounded-full border px-3.5 text-[13px] font-medium transition-colors",
+    on ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:border-[#cfcfd4] hover:text-ink",
+  );
 
   return (
     <section aria-label={t("pl.stage")}>
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
-        <span className="flex items-center gap-2">
-          <button
-            type="button" aria-pressed={heatOn} onClick={() => setHeatOn((v) => !v)}
-            className={cx("h-9 rounded-full border px-4 font-medium transition-colors", heatOn ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:text-ink")}
-          >
-            {t("pl.heat")}
-          </button>
-          <span
-            tabIndex={0} role="img" aria-label={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")} title={trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}
-            className="grid size-5 cursor-help place-items-center rounded-full border border-line text-[11px] font-semibold text-mute"
-          >i</span>
-        </span>
-        <label className="flex items-center gap-2 text-mute">
-          {t("pl.who")}
-          <select value={seg} onChange={(e) => setSeg(e.target.value as SegmentKey)} className={cx(sel, "text-ink")}>
-            {SEGMENTS.map((s) => <option key={s.key} value={s.key}>{t(s.label)}</option>)}
-          </select>
-        </label>
-        <button
-          type="button" aria-pressed={faces} onClick={() => setFaces((f) => !f)}
-          className={cx("h-9 rounded-full border px-4 font-medium transition-colors", faces ? "border-ink bg-ink text-white" : "border-line bg-surface text-mute hover:text-ink")}
-        >
+      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-2 text-[13px]">
+        <button type="button" aria-pressed={heatOn} onClick={() => setHeatOn((v) => !v)} className={pill(heatOn)}>
+          <Flame size={15} aria-hidden className={heatOn ? "text-lime" : undefined} />
+          {t("pl.heat")}
+        </button>
+        <button type="button" aria-pressed={faces} onClick={() => setFaces((f) => !f)} className={pill(faces)}>
+          <UsersRound size={15} aria-hidden className={faces ? "text-lime" : undefined} />
           {t("pl.faces")}
         </button>
+        <InfoTip label={t("pl.heatInfo")}>{trained ? t("pl.heatInfoModel") : t("pl.heatInfoOld")}</InfoTip>
+        <span aria-hidden className="mx-1 hidden h-5 w-px bg-line sm:block" />
+        <span className="flex items-center gap-2 text-mute">
+          {t("pl.who")}
+          <Select
+            label={t("pl.who")}
+            value={seg}
+            onChange={(v) => setSeg(v as SegmentKey)}
+            options={SEGMENTS.map((s) => ({ value: s.key, label: t(s.label) }))}
+            className="text-ink"
+          />
+        </span>
         <p className="tnum ml-auto text-mute" aria-live="off">
           {rows.length ? t("pl.avg", { n: rows.length, a: avg.toFixed(1) }) : t("pl.none")}
         </p>
@@ -395,14 +403,15 @@ export function Player({ test, ref }: { test: Test; ref?: Ref<PlayerHandle> }) {
         <div className="relative min-h-[320px] lg:min-h-[360px]">
         <aside
           aria-label={t("pl.thoughts")}
-          className="flex max-h-[440px] flex-col overflow-hidden rounded-card bg-surface lg:absolute lg:inset-0 lg:max-h-none"
+          className="flex max-h-[440px] flex-col overflow-hidden rounded-card bg-surface shadow-card lg:absolute lg:inset-0 lg:max-h-none"
         >
           <h3 className="shrink-0 border-b border-line px-4 py-3 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("pl.thoughts")}</h3>
           <ul className="min-h-0 flex-1 divide-y divide-line overflow-y-auto overscroll-contain">
             {rows.map(({ p, g }) => (
               <li key={p.id} className="flex gap-3 px-4 py-3">
-                {/* eslint-disable-next-line @next/next/no-img-element -- avatar from API */}
-                <img src={p.avatar_url} alt="" width={36} height={36} className="size-9 shrink-0 rounded-full object-cover" style={{ border: `2px solid ${p.color}` }} />
+                <span className="size-10 shrink-0 rounded-full p-[2px]" style={{ background: p.color }}>
+                  <Avatar src={p.avatar_url} name={p.name} rounded="rounded-full" className="size-full ring-2 ring-surface" />
+                </span>
                 <div className="min-w-0 flex-1 text-[13px]">
                   <p className="truncate"><b>{p.name}</b> <span className="text-mute">{p.age}, {p.occupation}</span></p>
                   <p className="truncate text-xs text-mute">{t("pl.looking")}: {g.looking_at}</p>

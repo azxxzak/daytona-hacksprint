@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_JP } from "next/font/google";
+import { Geist, Noto_Sans_JP } from "next/font/google";
 import { cookies } from "next/headers";
 import { I18nProvider } from "@/components/i18n-provider";
 import { ToastProvider } from "@/components/toast";
@@ -13,6 +13,12 @@ const noto = Noto_Sans_JP({
   preload: false,
 });
 
+const geist = Geist({
+  variable: "--font-geist",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: { default: "AdLens", template: "%s · AdLens" },
   description: "See your ad through the eyes of an AI viewer panel.",
@@ -24,7 +30,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const c = (await cookies()).get(LANG_COOKIE)?.value;
   const lang = isLang(c) ? c : "ja";
   return (
-    <html lang={lang} className={noto.variable}>
+    <html lang={lang} className={`${noto.variable} ${geist.variable}`}>
       <body>
         <I18nProvider initial={lang}>
           <ToastProvider>{children}</ToastProvider>

@@ -10,8 +10,8 @@ export default function NotFound() {
   return (
     <main className="grid min-h-dvh place-items-center px-6 text-center">
       <div>
-        <p className="tnum text-sm text-mute">404</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight">{t("err.pageTitle")}</h1>
+        <p className="tnum bg-[linear-gradient(transparent_62%,#c8f031_62%,#c8f031_90%,transparent_90%)] mx-auto w-fit px-1 text-[64px] font-bold leading-none tracking-[-0.04em]">404</p>
+        <h1 className="mt-5 text-[28px] font-bold tracking-[-0.02em]">{t("err.pageTitle")}</h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-mute">{t("err.pageBody")}</p>
         <Link href="/" className={buttonClass("primary", "lg", "mt-6")}>{t("common.back")}</Link>
       </div>

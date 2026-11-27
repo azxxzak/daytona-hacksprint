@@ -950,6 +950,19 @@ def _shared(token: str) -> Test:
     return t
 
 
+def _sample_credit() -> dict | None:
+    """SAMPLE_CREDIT: JSON {text, url, license, license_url} for an openly licensed sample ad (shown on the page)."""
+    try:
+        c = json.loads(os.getenv("SAMPLE_CREDIT", "") or "null")
+    except ValueError:
+        return None
+    if not isinstance(c, dict) or not c.get("text"):
+        return None
+    ok = lambda u: u if isinstance(u, str) and u.startswith("https://") else None  # noqa: E731
+    return {"text": str(c["text"])[:200], "url": ok(c.get("url")), "license": str(c.get("license", ""))[:40],
+            "license_url": ok(c.get("license_url"))}
+
+
 @app.get("/api/share/sample/available")
 def sample_available():
     try:
@@ -973,6 +986,8 @@ def shared_test(token: str, response: Response):
             p["name"] = f"Viewer {p['id'][1:].lstrip('0') or '0'}"
     out.update(media_url=f"{base}/media", thumb_url=f"{base}/thumb.jpg", api_base=base, read_only=True,
                context="", panel_from=None)
+    if token == "sample":
+        out["credit"] = _sample_credit()
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return out
 

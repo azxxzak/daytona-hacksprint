@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowRight, Download, RefreshCw, Sparkles } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import type { DecisionReport, Test } from "@/lib/types";
@@ -81,15 +81,19 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
         </div>
       </div>
 
-      <Card className="p-6 sm:p-10">
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("dr.thesis")}</p>
-        <p className="mt-2 text-balance text-2xl font-bold leading-snug tracking-tight sm:text-4xl">{r.thesis}</p>
-      </Card>
+      <div className="relative overflow-hidden rounded-[24px] bg-ink p-6 text-white shadow-lift sm:p-10">
+        <div aria-hidden className="dots absolute inset-0" />
+        <div aria-hidden className="absolute -bottom-24 -right-16 size-72 rounded-full bg-lime/20 blur-3xl" />
+        <p className="relative flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-lime">
+          <span aria-hidden className="size-1.5 rounded-full bg-lime" />{t("dr.thesis")}
+        </p>
+        <p className="relative mt-3 max-w-4xl text-balance text-2xl font-bold leading-snug tracking-[-0.02em] sm:text-[38px] sm:leading-[1.25]">{r.thesis}</p>
+      </div>
 
       <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {r.headline_cards.slice(0, 4).map((c) => (
-          <li key={c.label} className="rounded-card bg-surface p-5">
-            <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{c.label}</p>
+          <li key={c.label} className="rounded-card border-t-[3px] border-lime bg-surface p-5 shadow-card">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">{c.label}</p>
             <p className="mt-2 text-xl font-bold leading-snug">{c.value}</p>
             <p className="mt-1.5 text-sm leading-snug text-mute">{c.note}</p>
           </li>
@@ -100,8 +104,8 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
         <SectionHeader as="h3" title={t("dr.insights")} />
         <ol className="mt-5 space-y-4">
           {r.insights.map((i, n) => (
-            <li key={i.title} className="grid grid-cols-[2.25rem_1fr] gap-4 rounded-card bg-surface p-5 sm:p-6">
-              <span className="tnum grid size-9 place-items-center rounded-full bg-ink text-sm font-bold text-lime" aria-hidden>{n + 1}</span>
+            <li key={i.title} className="grid grid-cols-[2.25rem_1fr] gap-4 rounded-card bg-surface shadow-card p-5 sm:p-6">
+              <span className="tnum grid size-9 place-items-center rounded-xl bg-ink text-sm font-bold text-lime" aria-hidden>{n + 1}</span>
               <div className="min-w-0">
                 <h4 className="text-lg font-bold leading-snug"><span className="sr-only">{n + 1}. </span>{i.title}</h4>
                 <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -121,7 +125,7 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
           {cols.map((c) => {
             const items = r.segments.filter((s) => s.verdict === c.v);
             return (
-              <div key={c.v} className="rounded-card bg-surface p-5">
+              <div key={c.v} className="rounded-card bg-surface shadow-card p-5">
                 <h4 className="flex items-center gap-2 text-sm font-bold"><span className={cx("size-2.5 rounded-full", c.dot)} aria-hidden />{c.label}</h4>
                 <ul className="mt-4 space-y-4">
                   {items.length === 0 && <li className="text-sm text-mute">–</li>}
@@ -143,9 +147,9 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
           <SectionHeader as="h3" title={t("dr.tensions")} />
           <ul className="mt-5 space-y-3">
             {r.tensions.map((x) => (
-              <li key={x.tension} className="grid grid-cols-1 items-start gap-3 rounded-card bg-surface p-5 md:grid-cols-[1fr_auto_1fr]">
+              <li key={x.tension} className="grid grid-cols-1 items-start gap-3 rounded-card bg-surface shadow-card p-5 md:grid-cols-[1fr_auto_1fr]">
                 <p className="text-[15px] font-bold leading-snug">{x.tension}</p>
-                <span aria-hidden className="hidden pt-0.5 text-xl text-mute md:block">→</span>
+                <span aria-hidden className="hidden size-7 place-items-center rounded-full bg-canvas text-mute md:grid"><ArrowRight size={14} /></span>
                 <p className="text-sm leading-relaxed"><span className="sr-only">→ </span>{x.strategy}</p>
               </li>
             ))}
@@ -157,8 +161,8 @@ function Ready({ r, test, onRegenerate }: { r: DecisionReport; test: Test; onReg
         <SectionHeader as="h3" title={t("dr.actions")} />
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
           {horizons.map((h) => (
-            <div key={h.h} className="rounded-card bg-surface p-5">
-              <h4 className="flex items-center gap-2 border-b-2 border-ink pb-2 text-sm font-bold"><span className="size-2.5 rounded-full bg-lime ring-1 ring-ink" aria-hidden />{h.label}</h4>
+            <div key={h.h} className="rounded-card bg-surface shadow-card p-5">
+              <h4 className="flex items-center gap-2 border-b border-line pb-2.5 text-sm font-bold"><span className="size-2.5 rounded-full bg-lime ring-1 ring-ink" aria-hidden />{h.label}</h4>
               <ul className="mt-4 space-y-4">
                 {r.actions.filter((a) => a.horizon === h.h).map((a) => (
                   <li key={a.action}>
@@ -243,7 +247,7 @@ export function DecisionReportTab({ test }: { test: Test }) {
   if (state.status === "generating") {
     return (
       <div className="space-y-6">
-        <div className="mx-auto max-w-xl rounded-card bg-surface p-6">
+        <div className="mx-auto max-w-xl rounded-card bg-surface shadow-card p-6">
           <LongProgress since={since} estimateSec={75} label={t("dr.generating")} />
         </div>
         <Skeleton className="h-28" />
@@ -256,7 +260,7 @@ export function DecisionReportTab({ test }: { test: Test }) {
   if (state.status === "ready" && state.report && !editing) {
     return <Ready r={state.report} test={test} onRegenerate={test.read_only ? undefined : () => { setQuestion(state.report?.decision_question ?? ""); setEditing(true); }} />;
   }
-  if (test.read_only) return <p className="rounded-card bg-surface px-5 py-8 text-center text-sm text-mute">{t("share.noReport")}</p>;
+  if (test.read_only) return <p className="rounded-card bg-surface shadow-card px-5 py-8 text-center text-sm text-mute">{t("share.noReport")}</p>;
 
   return (
     <div className="mx-auto max-w-xl py-8 text-center sm:py-14">

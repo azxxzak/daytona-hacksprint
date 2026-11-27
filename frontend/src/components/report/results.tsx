@@ -246,7 +246,7 @@ function Themes({ test, onSeek }: { test: Test; onSeek: (t: number) => void }) {
       <SectionHeader label={t("th.label")} title={t("th.title")} />
       <ul className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {themes.map((th) => (
-          <li key={th.id} className="rounded-card bg-surface p-6">
+          <li key={th.id} className="rounded-card bg-surface shadow-card p-6">
             <div className="flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold leading-snug">{th.title}</h3>
               <span className="tnum shrink-0 text-sm font-medium">{Math.round(th.share * 100)}%</span>

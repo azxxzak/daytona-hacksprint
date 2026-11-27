@@ -119,6 +119,7 @@ export type Test = TestSummary & {
   api_base?: string;
   /** shared link: nothing can be changed or generated (no sign-in, no spend) */
   read_only?: boolean;
+  credit?: { text: string; url: string | null; license: string; license_url: string | null } | null;
   share_token?: string | null;
   /** which map is in frames[].heat: "unisal" = trained attention model, "spectral" = old contrast map */
   heat_model?: "unisal" | "spectral";

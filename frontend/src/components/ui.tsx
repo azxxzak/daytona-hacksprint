@@ -9,15 +9,16 @@ export function cx(...a: (string | false | null | undefined)[]): string {
   return a.filter(Boolean).join(" ");
 }
 
-type Variant = "primary" | "outline" | "dark" | "ghost";
+type Variant = "primary" | "outline" | "dark" | "ghost" | "lime";
 
 const base =
-  "inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap select-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap select-none transition-[color,background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100";
 const variants: Record<Variant, string> = {
-  primary: "bg-ink text-white hover:bg-black [&_svg]:text-lime",
+  primary: "bg-ink text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.12),0_1px_2px_rgb(17_17_17/0.2)] hover:bg-black hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.12),0_6px_16px_-6px_rgb(17_17_17/0.45)] [&_svg]:text-lime",
   dark: "bg-ink/80 text-white backdrop-blur-sm hover:bg-ink [&_svg]:text-lime",
-  outline: "bg-surface text-ink border border-ink/80 hover:bg-ink hover:text-white",
+  outline: "bg-surface text-ink border border-line shadow-[0_1px_2px_rgb(17_17_17/0.05)] hover:border-ink/40 hover:shadow-[0_4px_12px_-6px_rgb(17_17_17/0.25)]",
   ghost: "text-ink hover:bg-ink/5",
+  lime: "bg-lime text-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.5),0_1px_2px_rgb(17_17_17/0.2)] hover:bg-[#d3f74a] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.5),0_8px_20px_-8px_rgb(200_240_49/0.7)] disabled:bg-white/15 disabled:text-white/50 disabled:shadow-none",
 };
 const sizes = { sm: "h-8 px-3.5 text-[13px]", md: "h-10 px-5 text-sm", lg: "h-12 px-7 text-[15px]" };
 
@@ -55,7 +56,7 @@ export function LinkButton({
   );
 }
 
-/** Tiny label, large bold title, 2px black rule, optional action on the right. */
+/** Small eyebrow with a lime tick, large title, hairline rule, optional action on the right. */
 export function SectionHeader({
   label,
   title,
@@ -67,19 +68,60 @@ export function SectionHeader({
   action?: ReactNode;
   as?: "h1" | "h2" | "h3";
 }) {
+  const big = H === "h1";
   return (
-    <div className="flex items-end justify-between gap-4 border-b-2 border-ink pb-3">
+    <div className={cx("flex items-end justify-between gap-4 border-b border-line", big ? "pb-5" : "pb-3")}>
       <div className="min-w-0">
-        {label && <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{label}</p>}
-        <H className="text-2xl font-bold leading-tight tracking-tight sm:text-[28px]">{title}</H>
+        {label && (
+          <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
+            <span aria-hidden className="h-2.5 w-1 rounded-full bg-lime ring-1 ring-ink/80" />
+            {label}
+          </p>
+        )}
+        <H
+          className={cx(
+            "font-bold leading-tight tracking-[-0.02em]",
+            label && "mt-1.5",
+            big ? "text-[30px] sm:text-[40px]" : H === "h2" ? "text-[22px] sm:text-[26px]" : "text-lg sm:text-xl",
+          )}
+        >
+          {title}
+        </H>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
 
+/** Wordmark: a black tile holding a lime "lens", then the name. */
+export function Logo({ className, name = "AdLens", compact }: { className?: string; name?: string; compact?: boolean }) {
+  return (
+    <span className={cx("inline-flex items-center gap-2 text-[17px] font-bold tracking-[-0.02em]", className)}>
+      <span aria-hidden className="relative grid size-7 place-items-center rounded-[9px] bg-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.15)]">
+        <span className="size-3.5 rounded-full border-[2.5px] border-lime" />
+        <span className="absolute right-[7px] top-[7px] size-1 rounded-full bg-white" />
+      </span>
+      <span className={cx(compact && "max-sm:sr-only")}>{name}</span>
+    </span>
+  );
+}
+
+/** Segmented control: a grey track with the chosen item lifted onto a white chip. */
+export const segTrack = "flex gap-0.5 rounded-full bg-[#e7e7ea] p-1";
+export function segItem(on: boolean, extra?: string) {
+  return cx(
+    "rounded-full px-3.5 text-[13px] font-medium transition-[color,background-color,box-shadow]",
+    on ? "bg-surface text-ink shadow-[0_1px_3px_rgb(17_17_17/0.14)]" : "text-mute hover:text-ink",
+    extra,
+  );
+}
+
+/** Text input / textarea look shared by forms. */
+export const fieldClass =
+  "w-full rounded-xl border border-line bg-surface text-sm shadow-[0_1px_2px_rgb(17_17_17/0.04)] transition-[border-color,box-shadow] placeholder:text-mute/60 hover:border-[#cfcfd4] focus:border-ink";
+
 export function Card({ className, ...rest }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cx("rounded-card bg-surface", className)} {...rest} />;
+  return <div className={cx("rounded-card bg-surface shadow-card", className)} {...rest} />;
 }
 
 export function Spinner({ className }: { className?: string }) {
@@ -226,7 +268,7 @@ export function Dialog({
 
 export function ErrorNote({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <div role="alert" className="flex flex-wrap items-center gap-3 rounded-card border border-danger/30 bg-surface px-4 py-3 text-sm text-danger">
+    <div role="alert" className="flex flex-wrap items-center gap-3 rounded-card border border-danger/25 bg-[#fdf3f2] px-4 py-3 text-sm text-danger">
       <span className="min-w-0 flex-1">{children}</span>
       {action}
     </div>
@@ -240,5 +282,5 @@ export function useDocTitle(title: string | undefined) {
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden className={cx("pulse rounded-card bg-[#e4e4e8]", className)} />;
+  return <div aria-hidden className={cx("shimmer rounded-card", className)} />;
 }

@@ -43,7 +43,7 @@ function ReplyCard({ p, text, wide, basis, because }: { p: Persona; text?: strin
   return (
     <div className={cx("min-w-0", wide && "max-w-2xl")}>
       <p className="mb-1 pl-1 text-[11px] text-mute">{label} · <span className="font-medium text-ink">{p.name}</span></p>
-      <div className="fade-in flex gap-3 rounded-[18px] bg-surface p-3.5">
+      <div className="fade-in flex gap-3 rounded-[18px] bg-surface shadow-card p-3.5">
         <Avatar src={p.avatar_url} name={p.name} color={p.color} rounded="rounded-full" className="size-10 shrink-0" />
         <div className="min-w-0 flex-1 text-[15px] leading-relaxed">
           {text === undefined ? <Typing label={t("talk.thinking", { name: p.name })} /> : <p className="whitespace-pre-wrap">{text}</p>}
@@ -412,7 +412,7 @@ export function TalkView({ test, talk }: { test: Test; talk: Talk }) {
                   ),
                 )}
                 {sending && thinking.length === 0 && (
-                  <div className="fade-in flex w-fit items-center gap-3 rounded-[18px] bg-surface px-4 py-2">
+                  <div className="fade-in flex w-fit items-center gap-3 rounded-[18px] bg-surface shadow-card px-4 py-2">
                     <Users size={16} aria-hidden className="text-mute" />
                     <Typing label={t("talk.waiting")} />
                   </div>

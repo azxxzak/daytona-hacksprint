@@ -25,9 +25,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={i.id}
             role={i.kind === "error" ? "alert" : "status"}
-            className="fade-in pointer-events-auto flex max-w-[min(92vw,460px)] items-center gap-2.5 rounded-full bg-ink py-2.5 pl-3.5 pr-5 text-sm text-white"
+            className="toast-in pointer-events-auto flex max-w-[min(92vw,460px)] items-center gap-2.5 rounded-full bg-ink/95 py-2 pl-2 pr-5 text-sm text-white shadow-pop backdrop-blur"
           >
-            {i.kind === "success" ? <Check size={16} className="shrink-0 text-lime" aria-hidden /> : <AlertCircle size={16} className="shrink-0 text-lime" aria-hidden />}
+            <span aria-hidden className={i.kind === "success" ? "grid size-6 shrink-0 place-items-center rounded-full bg-lime text-ink" : "grid size-6 shrink-0 place-items-center rounded-full bg-[#ff6b5e] text-white"}>
+              {i.kind === "success" ? <Check size={14} strokeWidth={3} /> : <AlertCircle size={14} strokeWidth={2.5} />}
+            </span>
             <span>{i.text}</span>
           </div>
         ))}

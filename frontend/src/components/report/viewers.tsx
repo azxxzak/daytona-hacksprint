@@ -72,7 +72,7 @@ function PastTalks({ test, personas }: { test: Test; personas: Map<string, Perso
       <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">{t("vw.talksTitle")}</p>
       {loading && !data && <Skeleton className="h-[72px]" />}
       {error && !data && <ErrorNote action={<Button variant="outline" size="sm" onClick={reload}>{t("common.retry")}</Button>}>{t("vw.talksError")}</ErrorNote>}
-      {data && data.talks.length === 0 && <p className="rounded-card bg-surface px-5 py-4 text-sm text-mute">{t("vw.talksEmpty")}</p>}
+      {data && data.talks.length === 0 && <p className="rounded-card bg-surface shadow-card px-5 py-4 text-sm text-mute">{t("vw.talksEmpty")}</p>}
       {data && data.talks.length > 0 && (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.talks.map((k) => {
@@ -82,7 +82,7 @@ function PastTalks({ test, personas }: { test: Test; personas: Map<string, Perso
                 <button
                   type="button"
                   onClick={() => router.push(`/tests/${test.id}/talks/${k.id}`)}
-                  className="flex h-full w-full flex-col gap-2 rounded-card bg-surface p-4 text-left transition-colors hover:bg-white"
+                  className="flex h-full w-full flex-col gap-2 rounded-card bg-surface p-4 text-left shadow-card transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-lift"
                 >
                   <span className="line-clamp-2 text-[15px] font-bold leading-snug">{k.title || t("talk.untitled")}</span>
                   <span className="flex items-center justify-between gap-3 text-xs text-mute">

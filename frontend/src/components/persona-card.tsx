@@ -48,7 +48,7 @@ export function PersonaCard({
 
   return (
     <div className="group min-w-0">
-      <div className="relative overflow-hidden rounded-card bg-surface">
+      <div className="relative overflow-hidden rounded-card bg-surface shadow-card">
         <Avatar
           src={persona.avatar_url}
           name={persona.name}
